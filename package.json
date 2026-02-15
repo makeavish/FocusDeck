@@ -13,8 +13,8 @@
     "release:chrome": "RELEASE=1 npm run build:chrome",
     "release:firefox": "RELEASE=1 npm run build:firefox",
     "release": "RELEASE=1 npm run build",
-    "pack:chrome": "cd dist/chrome && zip -r ../../focusdeck-chrome.zip . -x '*.map'",
-    "pack:firefox": "cd dist/firefox && zip -r ../../focusdeck-firefox.zip . -x '*.map'",
+    "pack:chrome": "mkdir -p release && rm -f release/focusdeck-chrome-v$npm_package_version.zip && cd dist/chrome && zip -r ../../release/focusdeck-chrome-v$npm_package_version.zip . -x '*.map'",
+    "pack:firefox": "mkdir -p release && rm -f release/focusdeck-firefox-v$npm_package_version.zip && cd dist/firefox && zip -r ../../release/focusdeck-firefox-v$npm_package_version.zip . -x '*.map'",
     "pack": "npm run pack:chrome && npm run pack:firefox"
   },
   "dependencies": {

@@ -628,9 +628,8 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
     return false;
   }
 
-  const resumeConfig = resumeSnapshot?.adapterId === adapter.id ? resumeSnapshot.config : null;
   const nextConfig: SessionConfig = {
-    ...(resumeConfig ?? baseConfig),
+    ...baseConfig,
     ...overrides
   };
   const remainingPosts =
