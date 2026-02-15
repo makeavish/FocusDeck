@@ -114,7 +114,7 @@ Content scripts run only on X / Twitter pages to apply the focus layer, manage s
 
 > Host the file at `docs/privacy-policy.md` as a public URL before submission.
 > Options:
-> - GitHub raw URL: `https://raw.githubusercontent.com/<user>/FocusDeck/main/docs/privacy-policy.md`
+> - GitHub raw URL: `https://raw.githubusercontent.com/makeavish/FocusDeck/main/docs/privacy-policy.md`
 > - GitHub Pages or personal site: `https://vishal.wtf/focusdeck/privacy`
 
 ---
@@ -141,8 +141,8 @@ Firefox AMO: 1280×800
 
 ## Support URL
 
-GitHub Issues: `https://github.com/<user>/FocusDeck/issues`
+GitHub Issues: `https://github.com/makeavish/FocusDeck/issues`
 
 ## Homepage URL
 
-`https://github.com/<user>/FocusDeck`
+`https://github.com/makeavish/FocusDeck`
