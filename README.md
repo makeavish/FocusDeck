@@ -122,3 +122,45 @@ npm run build:firefox
 - `npm run test`
 - `npm run build`
 - `npm run release && npm run pack` (writes versioned ZIPs to `release/`)
+
+## Firefox Reviewer Build Instructions
+
+Use this section for AMO source-code submission.
+
+### Operating System / Build Environment
+
+- macOS or Linux
+- Node.js `22.x`
+- npm `10+` (or npm bundled with Node 22)
+
+### Install Requirements
+
+```bash
+node -v
+npm -v
+```
+
+If needed, install Node.js from `https://nodejs.org/`.
+
+### Reproducible Firefox Build Steps
+
+```bash
+npm ci
+npm run release:firefox
+```
+
+### Build Script Used
+
+- `release:firefox` -> `RELEASE=1 npm run build:firefox`
+- `build:firefox` -> `tsx scripts/build.ts firefox`
+
+### Expected Outputs
+
+- `dist/firefox/manifest.json`
+- `dist/firefox/content.js`
+- `release/focusdeck-firefox-v0.1.0.zip` (if `npm run pack:firefox` is executed)
+
+### Source Integrity
+
+- Source files in this repository are human-readable (`.ts`, `.html`, `.css`).
+- Generated/minified files are produced only during the build step into `dist/`.
