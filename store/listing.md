@@ -72,9 +72,6 @@ The extension does not use a browser-action popup because clicking the toolbar i
 ### `storage`
 Stores session configuration, theme preference, daily usage counters, and session snapshots locally. No data leaves the browser.
 
-### `activeTab`
-Required to inject the content script that manages focus sessions on the active X / Twitter tab.
-
 ### `tabs`
 Used for two purposes only:
 1. When the user clicks the toolbar icon, FocusDeck queries open tabs to check if the Settings page is already open (to re-focus it rather than opening a duplicate).
@@ -112,10 +109,7 @@ Content scripts run only on X / Twitter pages to apply the focus layer, manage s
 
 ## Privacy Policy URL
 
-> Host the file at `docs/privacy-policy.md` as a public URL before submission.
-> Options:
-> - GitHub raw URL: `https://raw.githubusercontent.com/makeavish/FocusDeck/main/docs/privacy-policy.md`
-> - GitHub Pages or personal site: `https://vishal.wtf/focusdeck/privacy`
+`https://github.com/makeavish/FocusDeck/blob/main/docs/privacy-policy.md`
 
 ---
 
@@ -131,11 +125,8 @@ Located in `store/screenshots/`:
 
 All screenshots use demo / placeholder content with no real user data.
 
-### Recommended resolution
-Chrome Web Store: 1280×800 or 640×400
-Firefox AMO: 1280×800
-
-> You may need to resize the generated screenshots to match these exact dimensions before uploading.
+### Uploaded resolution
+All screenshots in `store/screenshots/` are 1280×800.
 
 ---
 

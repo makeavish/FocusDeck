@@ -206,7 +206,7 @@ function scheduleResumeFocusRecovery(): void {
         return;
       }
 
-      engine.focusNearestToViewportCenter(true);
+      engine.focusNearestToViewportCenter(true, false);
       const recovered = engine.getViewState();
       if (recovered?.focusedHandle) {
         applyFocusLayer(recovered);
@@ -496,7 +496,7 @@ function ensureFeedMutationObserver(): void {
       if (engine) {
         const view = engine.getViewState();
         if (view?.snapshot.phase === "active" && !view.focusedHandle) {
-          engine.focusNearestToViewportCenter(true);
+          engine.focusNearestToViewportCenter(true, false);
         }
         applyFocusLayer(engine.getViewState());
       }
@@ -872,7 +872,7 @@ async function resumeFromRoutePrompt(): Promise<void> {
   await engine.resume();
   const restored = engine.restoreFocus(view?.snapshot.focusedPostId ?? null, false);
   if (!restored) {
-    engine.focusNearestToViewportCenter(true);
+    engine.focusNearestToViewportCenter(true, false);
   }
   scheduleResumeFocusRecovery();
 
@@ -1023,7 +1023,7 @@ async function handleRouteChange(): Promise<void> {
   }
 
   if (phase === "active" && wasFeed && nowFeed) {
-    engine.focusNearestToViewportCenter(false);
+    engine.focusNearestToViewportCenter(false, false);
     setAuxiliaryUiHidden(true);
     setFeedLocked(false);
     return;

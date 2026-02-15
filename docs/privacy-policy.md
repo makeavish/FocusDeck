@@ -32,4 +32,4 @@ Actions such as `Not interested` and `Save` are triggered only from explicit use
 
 ## Contact
 
-For store submission updates, maintain this file in-repo and keep extension listing language aligned with this policy.
+Report issues or questions at: <https://github.com/makeavish/FocusDeck/issues>

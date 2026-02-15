@@ -207,7 +207,7 @@ export class DeckEngine {
 
     const focusedHandle = this.focusedHandle ? this.findHandleById(this.focusedHandle.id) : null;
     return {
-      snapshot: this.state.snapshot,
+      snapshot: this.cloneSnapshot(this.state.snapshot),
       focusedHandle,
       focusedMeta: focusedHandle ? this.adapter.getPostMeta(focusedHandle) : null,
       feedCount: this.adapter.getFeedItems().length
@@ -261,7 +261,7 @@ export class DeckEngine {
     return true;
   }
 
-  focusNearestToViewportCenter(force = false): void {
+  focusNearestToViewportCenter(force = false, countView = true): void {
     if (!this.state || this.state.snapshot.phase !== "active") {
       return;
     }
@@ -296,7 +296,7 @@ export class DeckEngine {
       return;
     }
 
-    this.applyFocusedHandle(best.handle, true);
+    this.applyFocusedHandle(best.handle, countView);
   }
 
   restoreFocus(postId: string | null, countView = false): boolean {
@@ -480,7 +480,11 @@ export class DeckEngine {
   private attachObserver(): void {
     this.observerCleanup?.();
     this.observerCleanup = this.adapter.observeFeedChanges?.(() => {
-      this.focusNearestToViewportCenter(false);
+      const currentFocusedId = this.state?.snapshot.focusedPostId ?? null;
+      const currentFocusedHandle = currentFocusedId ? this.findHandleById(currentFocusedId) : null;
+      const shouldCountFromMutation =
+        !this.isHandleVisible(currentFocusedHandle) || !this.isHandleNearViewportCenter(currentFocusedHandle);
+      this.focusNearestToViewportCenter(false, shouldCountFromMutation);
       this.emit();
     }) ?? null;
   }
@@ -497,13 +501,43 @@ export class DeckEngine {
       });
     };
 
-    window.addEventListener("scroll", onViewportChange, { passive: true });
+    const scrollOptions: AddEventListenerOptions = { passive: true, capture: true };
+    const keyOptions: AddEventListenerOptions = { capture: true };
+    const timelineScroller = document.querySelector("[data-testid='primaryColumn']");
+    const mainScroller = document.querySelector("main");
+    const rootScroller = document.scrollingElement;
+    const scrollTargets: EventTarget[] = [document, window];
+    if (rootScroller) {
+      scrollTargets.push(rootScroller);
+    }
+    if (mainScroller) {
+      scrollTargets.push(mainScroller);
+    }
+    if (timelineScroller) {
+      scrollTargets.push(timelineScroller);
+    }
+    const uniqueScrollTargets = Array.from(new Set(scrollTargets));
+
+    for (const target of uniqueScrollTargets) {
+      target.addEventListener("scroll", onViewportChange, scrollOptions);
+    }
+    document.addEventListener("wheel", onViewportChange, scrollOptions);
+    document.addEventListener("touchmove", onViewportChange, scrollOptions);
+    document.addEventListener("keydown", onViewportChange, keyOptions);
+
     window.addEventListener("resize", onViewportChange, { passive: true });
 
     const cleanup = this.observerCleanup;
     this.observerCleanup = () => {
       cleanup?.();
-      window.removeEventListener("scroll", onViewportChange);
+
+      for (const target of uniqueScrollTargets) {
+        target.removeEventListener("scroll", onViewportChange, scrollOptions);
+      }
+      document.removeEventListener("wheel", onViewportChange, scrollOptions);
+      document.removeEventListener("touchmove", onViewportChange, scrollOptions);
+      document.removeEventListener("keydown", onViewportChange, keyOptions);
+
       window.removeEventListener("resize", onViewportChange);
       if (this.scrollRafId) {
         window.cancelAnimationFrame(this.scrollRafId);
@@ -556,6 +590,47 @@ export class DeckEngine {
     }
 
     return this.adapter.getFeedItems().find((handle) => handle.id === id) ?? null;
+  }
+
+  private cloneSnapshot(snapshot: SessionSnapshot): SessionSnapshot {
+    return {
+      ...snapshot,
+      config: {
+        ...snapshot.config
+      },
+      stats: {
+        ...snapshot.stats,
+        viewedPostIds: [...snapshot.stats.viewedPostIds],
+        actions: {
+          ...snapshot.stats.actions
+        }
+      }
+    };
+  }
+
+  private isHandleVisible(handle: PostHandle | null): boolean {
+    if (!handle) {
+      return false;
+    }
+
+    const rect = handle.element.getBoundingClientRect();
+    return rect.bottom > 0 && rect.top < window.innerHeight && rect.height > 20;
+  }
+
+  private isHandleNearViewportCenter(handle: PostHandle | null): boolean {
+    if (!handle) {
+      return false;
+    }
+
+    const rect = handle.element.getBoundingClientRect();
+    if (rect.height <= 20) {
+      return false;
+    }
+
+    const viewportCenter = window.innerHeight / 2;
+    const handleCenter = rect.top + rect.height / 2;
+    const maxDistance = Math.max(140, window.innerHeight * 0.2);
+    return Math.abs(handleCenter - viewportCenter) <= maxDistance;
   }
 
   private persistSoon(): void {

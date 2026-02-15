@@ -830,13 +830,17 @@ export class XAdapter implements Adapter {
       return null;
     }
 
+    const permalink = getStatusLink(handle.element, handle.element, true)?.href;
+    const statusId = getStatusIdFromUrl(permalink);
+    if (statusId) {
+      return statusId;
+    }
+
     if (isReplyTweet(handle.element)) {
       return null;
     }
 
-    const permalink = getStatusLink(handle.element, handle.element, true)?.href;
-    const statusId = getStatusIdFromUrl(permalink);
-    return statusId ?? handle.id;
+    return handle.id;
   }
 
   isAdvertisement(handle: PostHandle): boolean {
