@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="src/icons/icon.svg" alt="FocusDeck Icon" width="128" height="128">
+</p>
+
 # FocusDeck: Intentional Feed
 
 FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing intentional.
@@ -11,6 +15,16 @@ FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing in
 - Focused post is selected as the item nearest viewport center.
 - Floating action pill includes `Save` and `Not interested`.
 - After a posts-limit session ends, only previously viewed posts remain explorable; non-viewed posts are blocked, blurred, and non-clickable.
+
+## Screenshots
+
+<p align="center">
+  <img src="store/screenshots/2-blocked-posts.png" alt="Blocked Posts View" width="45%">
+  <img src="store/screenshots/3-daily-limit.png" alt="Daily Limit Reached" width="45%">
+</p>
+<p align="center">
+  <img src="store/screenshots/1-settings.png" alt="Settings Page" width="80%">
+</p>
 
 ## Session and Route Handling
 
