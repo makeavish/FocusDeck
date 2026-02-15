@@ -1,0 +1,43 @@
+{
+  "manifest_version": 3,
+  "name": "FocusDeck: Intentional Feed",
+  "version": "0.1.0",
+  "description": "Keep native feed UI while adding subtle focus sessions and user-initiated actions.",
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
+  "permissions": ["storage", "activeTab", "tabs"],
+  "host_permissions": ["*://*.x.com/*", "*://*.twitter.com/*"],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "content_scripts": [
+    {
+      "matches": ["*://*.x.com/*", "*://*.twitter.com/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": {
+    "default_title": "FocusDeck",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png",
+      "48": "icons/icon-48.png"
+    }
+  },
+  "options_page": "settings/settings.html",
+  "commands": {
+    "start-session": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+Period",
+        "mac": "Command+Shift+Period"
+      },
+      "description": "Start FocusDeck session"
+    }
+  }
+}

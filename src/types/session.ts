@@ -1,0 +1,64 @@
+export type SessionMode = "posts" | "time";
+export type ThemeMode = "system" | "light" | "dark";
+
+export type SessionPhase = "idle" | "prompting" | "active" | "paused" | "completed";
+
+export type PauseReason = "manual" | "details" | "navigation" | "limit" | null;
+
+export interface SessionConfig {
+  mode: SessionMode;
+  themeMode: ThemeMode;
+  postLimit: number;
+  timeLimitMinutes: number;
+  minimalMode: boolean;
+}
+
+export interface SessionStats {
+  viewedCount: number;
+  viewedPostIds: string[];
+  activeMs: number;
+  actions: {
+    notInterested: number;
+    bookmarked: number;
+    openedDetails: number;
+  };
+}
+
+export interface SessionSnapshot {
+  phase: SessionPhase;
+  adapterId: string;
+  config: SessionConfig;
+  startedAt: number;
+  updatedAt: number;
+  focusedPostId: string | null;
+  pauseReason: PauseReason;
+  stats: SessionStats;
+}
+
+export interface SessionSummary {
+  reason: "posts-limit" | "time-limit" | "manual";
+  viewedCount: number;
+  durationMs: number;
+}
+
+export interface DailyLimitRule {
+  maxPosts: number;
+  maxMinutes: number;
+}
+
+export interface DailyLimitsConfig {
+  global: DailyLimitRule;
+  perSite: Record<string, DailyLimitRule>;
+}
+
+export interface DailyUsageBucket {
+  postsViewed: number;
+  activeMs: number;
+  emergencyMs: number;
+}
+
+export interface DailyUsage {
+  dateKey: string;
+  global: DailyUsageBucket;
+  perSite: Record<string, DailyUsageBucket>;
+}

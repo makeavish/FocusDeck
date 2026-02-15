@@ -1,0 +1,33 @@
+{
+  "name": "focusdeck",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "clean": "rm -rf dist",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run",
+    "build:chrome": "tsx scripts/build.ts chrome",
+    "build:firefox": "tsx scripts/build.ts firefox",
+    "build": "npm run build:chrome && npm run build:firefox",
+    "release:chrome": "RELEASE=1 npm run build:chrome",
+    "release:firefox": "RELEASE=1 npm run build:firefox",
+    "release": "RELEASE=1 npm run build",
+    "pack:chrome": "cd dist/chrome && zip -r ../../focusdeck-chrome.zip . -x '*.map'",
+    "pack:firefox": "cd dist/firefox && zip -r ../../focusdeck-firefox.zip . -x '*.map'",
+    "pack": "npm run pack:chrome && npm run pack:firefox"
+  },
+  "dependencies": {
+    "webextension-polyfill": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/chrome": "^0.0.302",
+    "@types/node": "^22.13.0",
+    "@types/webextension-polyfill": "^0.12.3",
+    "sharp": "^0.34.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.3",
+    "vite": "^6.0.3",
+    "vitest": "^3.0.5"
+  }
+}

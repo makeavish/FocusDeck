@@ -1,0 +1,28 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#3b9afc;stop-opacity:1" />
+      <stop offset="100%" style="stop-color:#1b6fd1;stop-opacity:1" />
+    </linearGradient>
+  </defs>
+
+  <!-- Solid rounded-square background (fills most of the canvas like Notion/Bitwarden) -->
+  <rect x="6" y="6" width="116" height="116" rx="24" fill="url(#bg)" />
+
+  <!-- Card stack silhouette (white, offset) -->
+  <rect x="30" y="38" width="68" height="62" rx="8" fill="rgba(255,255,255,0.25)" transform="rotate(-5 64 64)" />
+  <rect x="30" y="34" width="68" height="62" rx="8" fill="rgba(255,255,255,0.4)" transform="rotate(-2.5 64 64)" />
+
+  <!-- Top card -->
+  <rect x="30" y="30" width="68" height="62" rx="8" fill="#ffffff" />
+
+  <!-- Focus crosshair on top card -->
+  <circle cx="64" cy="58" r="14" stroke="#1b6fd1" stroke-width="5" fill="none" />
+  <circle cx="64" cy="58" r="5" fill="#1b6fd1" />
+
+  <!-- Crosshair ticks -->
+  <line x1="64" y1="38" x2="64" y2="46" stroke="#1b6fd1" stroke-width="4" stroke-linecap="round" />
+  <line x1="64" y1="78" x2="64" y2="70" stroke="#1b6fd1" stroke-width="4" stroke-linecap="round" />
+  <line x1="84" y1="58" x2="76" y2="58" stroke="#1b6fd1" stroke-width="4" stroke-linecap="round" />
+  <line x1="44" y1="58" x2="52" y2="58" stroke="#1b6fd1" stroke-width="4" stroke-linecap="round" />
+</svg>

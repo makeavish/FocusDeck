@@ -1,0 +1,92 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>FocusDeck Settings</title>
+    <script type="module" src="./theme-preload.ts"></script>
+    <link rel="stylesheet" href="./settings.css" />
+  </head>
+  <body>
+    <main class="settings-shell">
+      <aside class="settings-nav">
+        <div class="brand">
+          <img class="brand-icon" src="../icons/icon-128.png" alt="FocusDeck" width="44" height="44" />
+          <div class="brand-copy">
+            <h1>FocusDeck</h1>
+            <p>Settings Dashboard</p>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Settings Sections">
+          <button type="button" class="nav-item nav-item-active" data-tab="general">General</button>
+          <button type="button" class="nav-item" data-tab="limits">Limits</button>
+        </nav>
+
+        <p class="nav-note">Local-only settings. No cloud sync.</p>
+      </aside>
+
+      <section class="settings-content">
+        <header class="content-header">
+          <p class="eyebrow">FOCUSDECK SETTINGS</p>
+          <h2 id="panelTitle">General</h2>
+          <p id="panelDescription" class="subcopy">Theme and baseline behavior for FocusDeck overlays.</p>
+        </header>
+
+        <section id="panel-general" class="panel">
+          <article class="card">
+            <h3>Theme</h3>
+            <p>Choose how FocusDeck controls render over feed pages.</p>
+            <div class="segmented" role="radiogroup" aria-label="Theme mode">
+              <label class="seg-option">
+                <input type="radio" name="themeMode" value="system" checked />
+                <span>System</span>
+              </label>
+              <label class="seg-option">
+                <input type="radio" name="themeMode" value="light" />
+                <span>Light mode</span>
+              </label>
+              <label class="seg-option">
+                <input type="radio" name="themeMode" value="dark" />
+                <span>Dark mode</span>
+              </label>
+            </div>
+          </article>
+
+          <article class="card">
+            <h3>Session Data</h3>
+            <p>Clear unfinished state if a feed tab was closed while a session was active.</p>
+            <div class="actions">
+              <button id="clearSnapshot" type="button">Clear unfinished session</button>
+            </div>
+          </article>
+        </section>
+
+        <section id="panel-limits" class="panel is-hidden">
+          <article class="card">
+            <h3>Total Daily Limit</h3>
+            <p>Total daily post limit across all sessions. Resets at 12:00 AM browser local time. Set to 0 to disable.</p>
+            <label class="field">
+              <span>Total daily post limit</span>
+              <input id="sharedDailyLimit" type="number" min="0" step="1" value="0" />
+            </label>
+            <p id="usageSummary" class="muted">Loading usage...</p>
+            <div class="actions">
+              <button id="clearDailyUsage" type="button">Reset today's usage</button>
+            </div>
+          </article>
+        </section>
+
+        <footer class="footer">
+          <p id="status" class="status">Ready</p>
+          <div class="footer-actions">
+            <button id="resetDefaults" type="button">Reset defaults</button>
+            <button id="applyChanges" class="primary" type="button">Apply changes</button>
+          </div>
+        </footer>
+      </section>
+    </main>
+
+    <script type="module" src="./settings.ts"></script>
+  </body>
+</html>
