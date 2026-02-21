@@ -12,7 +12,7 @@ FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing in
 - Feed access is session-gated; if no session is active, feed posts are hidden and a start-session popover is shown.
 - During a session, only the focused post is visible; all other feed items are hidden.
 - Right sidebar modules and promoted/ad feed units are hidden while on feed routes.
-- Focused post is selected as the item nearest viewport center.
+- On fresh session start, focus begins at the first visible feed post; ongoing viewport changes can move focus to the nearest visible post.
 - Floating action pill includes `Save` and `Not interested`.
 - After a posts-limit session ends, only previously viewed posts remain explorable; non-viewed posts are blocked, blurred, and non-clickable.
 

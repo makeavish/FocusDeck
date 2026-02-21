@@ -29,6 +29,7 @@ On supported feed routes (`x.com` / `twitter.com`):
 
 - Without an active session, feed posts are locked (`data-focusdeck-locked`) and a session-start prompt is shown.
 - With an active/paused session on feed, only the focused post remains visible (`data-focusdeck-focused`) while non-focused posts are hidden (`data-focusdeck-hidden`).
+- Fresh sessions initialize focus to the first visible feed post; later viewport changes can re-select the nearest visible post.
 - Sidebar and promoted/ad units are hidden on feed routes (`data-focusdeck-hidden-ui`).
 - On detail/thread/media routes, session is paused (`pauseReason=details`) and detail/reply scrolling does not increment feed counters.
 - After a posts-limit completion, FocusDeck enters viewed-only explore mode: viewed posts remain accessible and non-viewed posts are blocked/blurred.

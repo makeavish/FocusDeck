@@ -141,7 +141,11 @@ export class DeckEngine {
       return true;
     }
 
-    this.focusNearestToViewportCenter(true);
+    if (resumed) {
+      this.focusNearestToViewportCenter(true);
+    } else if (!this.focusFirstVisible(true)) {
+      this.focusNearestToViewportCenter(true);
+    }
     this.emit();
     this.persistSoon();
     return true;
@@ -261,14 +265,14 @@ export class DeckEngine {
     return true;
   }
 
-  focusNearestToViewportCenter(force = false, countView = true): void {
+  focusNearestToViewportCenter(force = false, countView = true): boolean {
     if (!this.state || this.state.snapshot.phase !== "active") {
-      return;
+      return false;
     }
 
     const handles = this.adapter.getFeedItems();
     if (!handles.length) {
-      return;
+      return false;
     }
 
     const viewportCenter = window.innerHeight / 2;
@@ -289,14 +293,44 @@ export class DeckEngine {
     }
 
     if (!best) {
-      return;
+      return false;
     }
 
     if (!force && this.state.snapshot.focusedPostId === best.handle.id) {
-      return;
+      return true;
     }
 
     this.applyFocusedHandle(best.handle, countView);
+    return true;
+  }
+
+  private focusFirstVisible(countView = true): boolean {
+    if (!this.state || this.state.snapshot.phase !== "active") {
+      return false;
+    }
+
+    const handles = this.adapter.getFeedItems();
+    if (!handles.length) {
+      return false;
+    }
+
+    const visible = handles
+      .map((handle) => ({ handle, rect: handle.element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.bottom > 0 && rect.top < window.innerHeight && rect.height > 20)
+      .sort((left, right) => {
+        if (left.rect.top === right.rect.top) {
+          return left.rect.left - right.rect.left;
+        }
+        return left.rect.top - right.rect.top;
+      });
+
+    const firstVisible = visible[0]?.handle;
+    if (!firstVisible) {
+      return false;
+    }
+
+    this.applyFocusedHandle(firstVisible, countView);
+    return true;
   }
 
   restoreFocus(postId: string | null, countView = false): boolean {
@@ -482,9 +516,13 @@ export class DeckEngine {
     this.observerCleanup = this.adapter.observeFeedChanges?.(() => {
       const currentFocusedId = this.state?.snapshot.focusedPostId ?? null;
       const currentFocusedHandle = currentFocusedId ? this.findHandleById(currentFocusedId) : null;
-      const shouldCountFromMutation =
-        !this.isHandleVisible(currentFocusedHandle) || !this.isHandleNearViewportCenter(currentFocusedHandle);
-      this.focusNearestToViewportCenter(false, shouldCountFromMutation);
+      const isFocusedHandleVisible = this.isHandleVisible(currentFocusedHandle);
+      if (currentFocusedHandle && isFocusedHandleVisible) {
+        this.emit();
+        return;
+      }
+
+      this.focusNearestToViewportCenter(false, true);
       this.emit();
     }) ?? null;
   }
@@ -615,22 +653,6 @@ export class DeckEngine {
 
     const rect = handle.element.getBoundingClientRect();
     return rect.bottom > 0 && rect.top < window.innerHeight && rect.height > 20;
-  }
-
-  private isHandleNearViewportCenter(handle: PostHandle | null): boolean {
-    if (!handle) {
-      return false;
-    }
-
-    const rect = handle.element.getBoundingClientRect();
-    if (rect.height <= 20) {
-      return false;
-    }
-
-    const viewportCenter = window.innerHeight / 2;
-    const handleCenter = rect.top + rect.height / 2;
-    const maxDistance = Math.max(140, window.innerHeight * 0.2);
-    return Math.abs(handleCenter - viewportCenter) <= maxDistance;
   }
 
   private persistSoon(): void {
