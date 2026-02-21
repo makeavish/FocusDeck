@@ -56,9 +56,18 @@ class MockEventTarget {
   }
 }
 
+class MockScrollableElement extends MockEventTarget {
+  scrollTop = 0;
+  scrollHeight = 4_000;
+  clientHeight = 600;
+}
+
 class MockWindow extends MockEventTarget {
   innerHeight = 600;
+  scrollY = 0;
+  pageYOffset = 0;
   private nextRafId = 1;
+  private readonly rafCallbacks = new Map<number, FrameRequestCallback>();
   setTimeout = ((_handler: TimerHandler, _timeout?: number, ..._args: unknown[]) => 1) as typeof window.setTimeout;
   clearTimeout = ((_id: number) => undefined) as typeof window.clearTimeout;
   setInterval = ((_handler: TimerHandler, _timeout?: number, ..._args: unknown[]) => 1) as typeof window.setInterval;
@@ -66,18 +75,40 @@ class MockWindow extends MockEventTarget {
   requestAnimationFrame = ((callback: FrameRequestCallback) => {
     const id = this.nextRafId;
     this.nextRafId += 1;
-    callback(0);
+    this.rafCallbacks.set(id, callback);
     return id;
   }) as typeof window.requestAnimationFrame;
-  cancelAnimationFrame = ((_id: number) => undefined) as typeof window.cancelAnimationFrame;
+  cancelAnimationFrame = ((id: number) => {
+    this.rafCallbacks.delete(id);
+  }) as typeof window.cancelAnimationFrame;
+
+  flushAnimationFrames(): void {
+    const callbacks = Array.from(this.rafCallbacks.values());
+    this.rafCallbacks.clear();
+    for (const callback of callbacks) {
+      callback(0);
+    }
+  }
 }
 
 class MockDocument extends MockEventTarget {
   visibilityState: DocumentVisibilityState = "visible";
-  scrollingElement: Element | null = null;
+  readonly scrollingRoot = new MockScrollableElement();
+  scrollingElement: Element | null = this.scrollingRoot as unknown as Element;
+  documentElement = this.scrollingRoot as unknown as HTMLElement;
+  body = this.scrollingRoot as unknown as HTMLElement;
+  private readonly queryMap = new Map<string, Element | null>();
+
+  setScrollTop(top: number): void {
+    this.scrollingRoot.scrollTop = top;
+  }
+
+  setQueryResult(selector: string, value: Element | null): void {
+    this.queryMap.set(selector, value);
+  }
 
   querySelector(_selector: string): Element | null {
-    return null;
+    return this.queryMap.get(_selector) ?? null;
   }
 
   querySelectorAll<T extends Element>(_selector: string): NodeListOf<T> {
@@ -201,6 +232,7 @@ describe("DeckEngine startup and mutation focus behavior", () => {
   let originalWindow: Window | undefined;
   let originalDocument: Document | undefined;
   let mockWindow: MockWindow;
+  let mockDocument: MockDocument;
   let activeEngine: DeckEngine | null = null;
 
   beforeEach(() => {
@@ -208,7 +240,7 @@ describe("DeckEngine startup and mutation focus behavior", () => {
     originalDocument = globalRef.document;
 
     mockWindow = new MockWindow();
-    const mockDocument = new MockDocument();
+    mockDocument = new MockDocument();
 
     Object.defineProperty(globalRef, "window", {
       value: mockWindow as unknown as Window,
@@ -327,12 +359,88 @@ describe("DeckEngine startup and mutation focus behavior", () => {
     expect(activeEngine.getViewState()?.snapshot.focusedPostId).toBe("post-1");
 
     // Simulate user scroll where another post becomes nearest to viewport center.
+    mockWindow.scrollY = 260;
+    mockWindow.pageYOffset = 260;
+    mockDocument.setScrollTop(260);
     firstRect.top = -70;
     secondRect.top = 170;
     thirdRect.top = 430;
     mockWindow.emit("scroll");
+    mockWindow.flushAnimationFrames();
 
     expect(activeEngine.getViewState()?.snapshot.focusedPostId).toBe("post-2");
     expect(activeEngine.getViewState()?.snapshot.stats.viewedCount).toBe(2);
+  });
+
+  it("re-focuses the first visible post when returning to top after scrolling down", async () => {
+    const firstRect: RectState = { top: 0, height: 120 };
+    const secondRect: RectState = { top: 280, height: 120 };
+    const thirdRect: RectState = { top: 500, height: 120 };
+
+    const adapter = new FakeAdapter([
+      buildHandle("post-1", firstRect),
+      buildHandle("post-2", secondRect),
+      buildHandle("post-3", thirdRect)
+    ]);
+
+    activeEngine = new DeckEngine(adapter, new ActionDispatcher(0), DEFAULT_DAILY_LIMITS, buildDailyUsage());
+    const started = await activeEngine.start(DEFAULT_CONFIG);
+
+    expect(started).toBe(true);
+    expect(activeEngine.getViewState()?.snapshot.focusedPostId).toBe("post-1");
+
+    // Scroll down first so center-based focus moves away from the first post.
+    mockWindow.scrollY = 260;
+    mockWindow.pageYOffset = 260;
+    mockDocument.setScrollTop(260);
+    firstRect.top = -90;
+    secondRect.top = 170;
+    thirdRect.top = 430;
+    mockWindow.emit("scroll");
+    mockWindow.flushAnimationFrames();
+    expect(activeEngine.getViewState()?.snapshot.focusedPostId).toBe("post-2");
+
+    // Return to top where center would normally still prefer post-2.
+    mockWindow.scrollY = 0;
+    mockWindow.pageYOffset = 0;
+    mockDocument.setScrollTop(0);
+    firstRect.top = 36;
+    secondRect.top = 210;
+    thirdRect.top = 470;
+    mockWindow.emit("scroll");
+    mockWindow.flushAnimationFrames();
+
+    expect(activeEngine.getViewState()?.snapshot.focusedPostId).toBe("post-1");
+  });
+
+  it("does not remain top-locked when an active feed scroller has moved", async () => {
+    const firstRect: RectState = { top: 40, height: 120 };
+    const secondRect: RectState = { top: 240, height: 120 };
+    const thirdRect: RectState = { top: 500, height: 120 };
+
+    const adapter = new FakeAdapter([
+      buildHandle("post-1", firstRect),
+      buildHandle("post-2", secondRect),
+      buildHandle("post-3", thirdRect)
+    ]);
+
+    activeEngine = new DeckEngine(adapter, new ActionDispatcher(0), DEFAULT_DAILY_LIMITS, buildDailyUsage());
+    const started = await activeEngine.start(DEFAULT_CONFIG);
+
+    expect(started).toBe(true);
+    expect(activeEngine.getViewState()?.snapshot.focusedPostId).toBe("post-1");
+
+    // Simulate nested feed scroller movement while document/body stay at 0.
+    const nestedMain = new MockScrollableElement();
+    nestedMain.scrollTop = 220;
+    nestedMain.scrollHeight = 5_000;
+    nestedMain.clientHeight = 600;
+    mockDocument.setQueryResult("main", nestedMain as unknown as Element);
+
+    mockWindow.emit("scroll");
+    mockWindow.flushAnimationFrames();
+
+    // Focus should use center strategy once any active feed scroller moved.
+    expect(activeEngine.getViewState()?.snapshot.focusedPostId).toBe("post-2");
   });
 });

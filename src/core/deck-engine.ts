@@ -275,32 +275,48 @@ export class DeckEngine {
       return false;
     }
 
-    const viewportCenter = window.innerHeight / 2;
-    let best: { handle: PostHandle; distance: number } | null = null;
-
-    for (const handle of handles) {
-      const rect = handle.element.getBoundingClientRect();
-      const visible = rect.bottom > 0 && rect.top < window.innerHeight && rect.height > 20;
-      if (!visible) {
-        continue;
-      }
-
-      const center = rect.top + rect.height / 2;
-      const distance = Math.abs(center - viewportCenter);
-      if (!best || distance < best.distance) {
-        best = { handle, distance };
-      }
-    }
-
-    if (!best) {
+    const visible = handles
+      .map((handle) => ({ handle, rect: handle.element.getBoundingClientRect() }))
+      .filter(({ rect }) => rect.bottom > 0 && rect.top < window.innerHeight && rect.height > 20);
+    if (!visible.length) {
       return false;
     }
 
-    if (!force && this.state.snapshot.focusedPostId === best.handle.id) {
+    const topmostVisible = [...visible].sort((left, right) => {
+      if (left.rect.top === right.rect.top) {
+        return left.rect.left - right.rect.left;
+      }
+      return left.rect.top - right.rect.top;
+    })[0]?.handle;
+    if (!topmostVisible) {
+      return false;
+    }
+
+    let nextHandle = topmostVisible;
+    if (!this.isNearFeedTop()) {
+      const viewportCenter = window.innerHeight / 2;
+      let best: { handle: PostHandle; distance: number } | null = null;
+
+      for (const item of visible) {
+        const center = item.rect.top + item.rect.height / 2;
+        const distance = Math.abs(center - viewportCenter);
+        if (!best || distance < best.distance) {
+          best = { handle: item.handle, distance };
+        }
+      }
+
+      if (!best) {
+        return false;
+      }
+
+      nextHandle = best.handle;
+    }
+
+    if (!force && this.state.snapshot.focusedPostId === nextHandle.id) {
       return true;
     }
 
-    this.applyFocusedHandle(best.handle, countView);
+    this.applyFocusedHandle(nextHandle, countView);
     return true;
   }
 
@@ -653,6 +669,41 @@ export class DeckEngine {
 
     const rect = handle.element.getBoundingClientRect();
     return rect.bottom > 0 && rect.top < window.innerHeight && rect.height > 20;
+  }
+
+  private isNearFeedTop(): boolean {
+    const epsilonPx = 2;
+    const offsets: number[] = [];
+    const pushOffset = (value: number | null | undefined): void => {
+      if (typeof value !== "number" || !Number.isFinite(value)) {
+        return;
+      }
+      offsets.push(Math.max(0, value));
+    };
+
+    const windowTop = typeof window.scrollY === "number" ? window.scrollY : window.pageYOffset;
+    pushOffset(windowTop);
+
+    const candidateNodes = [
+      document.querySelector<HTMLElement>("[data-testid='primaryColumn']"),
+      document.querySelector<HTMLElement>("main"),
+      document.scrollingElement as HTMLElement | null,
+      document.documentElement,
+      document.body
+    ].filter((node): node is HTMLElement => Boolean(node));
+
+    const uniqueNodes = Array.from(new Set(candidateNodes));
+    for (const node of uniqueNodes) {
+      if (node.scrollHeight > node.clientHeight + epsilonPx || node.scrollTop > epsilonPx) {
+        pushOffset(node.scrollTop);
+      }
+    }
+
+    if (!offsets.length) {
+      return true;
+    }
+
+    return offsets.every((offset) => offset <= epsilonPx);
   }
 
   private persistSoon(): void {
