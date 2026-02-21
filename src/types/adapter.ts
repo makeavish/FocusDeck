@@ -58,6 +58,7 @@ export interface Adapter {
   id: string;
   name: string;
   isSupportedUrl(url: string): boolean;
+  isAuthenticated?(url: string): boolean;
   isFeedPage?(url: string): boolean;
   isDetailPage?(url: string): boolean;
   getFeedItems(): PostHandle[];

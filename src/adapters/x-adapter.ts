@@ -3,6 +3,8 @@ import type { ActionResult, Adapter, MediaItem, PostHandle, PostMeta, QuotedPost
 const PRIMARY_CARD_SELECTOR = "article[data-testid='tweet']";
 const FALLBACK_CARD_SELECTOR = "article[role='article']";
 const QUOTE_SELECTOR = "[data-testid='quoteTweet']";
+const FEED_STRUCTURE_MUTATION_SELECTOR =
+  "article[data-testid='tweet'], article[role='article'], [data-testid='cellInnerDiv'], [data-testid='placementTracking'], [data-testid='primaryColumn']";
 const MEDIA_CONTAINER_SELECTOR =
   "[data-testid='tweetPhoto'], [data-testid='videoComponent'], [data-testid='videoPlayer'], [data-testid='card.wrapper'], [data-testid*='video'], a[href*='/video/']";
 const HANDLE_ATTR = "data-focusdeck-id";
@@ -776,9 +778,67 @@ function isLikelyFeedPost(root: HTMLElement): boolean {
   return hasPrimaryStatus || hasTweetText || hasMedia || (hasActionRow && hasUserMarker);
 }
 
-function isFeedPath(pathname: string): boolean {
+const X_AUTH_PATH_PREFIXES = ["/i/flow/login", "/i/flow/signup"];
+const X_LOGGED_IN_SELECTORS =
+  "a[data-testid='AppTabBar_Home_Link'], a[href='/home'][role='link'], [data-testid='SideNav_AccountSwitcher_Button'], [data-testid='SideNav_NewTweet_Button']";
+const X_LOGGED_OUT_SELECTORS =
+  "a[href*='/i/flow/login'], a[href*='/i/flow/signup'], input[autocomplete='username'], form[action*='/sessions']";
+const X_FEED_SHELL_SELECTORS =
+  "[data-testid='primaryColumn'], main [data-testid='cellInnerDiv'], article[data-testid='tweet'], article[role='article']";
+
+function canQueryDom(root: unknown): root is ParentNode & { querySelector: (selector: string) => Element | null } {
+  return Boolean(root && typeof (root as { querySelector?: unknown }).querySelector === "function");
+}
+
+export interface XAuthSignals {
+  loggedInShellDetected: boolean;
+  loggedOutMarkersDetected: boolean;
+  feedShellDetected: boolean;
+}
+
+function detectXAuthSignals(root: unknown): XAuthSignals {
+  if (!canQueryDom(root)) {
+    return {
+      loggedInShellDetected: false,
+      loggedOutMarkersDetected: false,
+      feedShellDetected: false
+    };
+  }
+
+  return {
+    loggedInShellDetected: Boolean(root.querySelector(X_LOGGED_IN_SELECTORS)),
+    loggedOutMarkersDetected: Boolean(root.querySelector(X_LOGGED_OUT_SELECTORS)),
+    feedShellDetected: Boolean(root.querySelector(X_FEED_SHELL_SELECTORS))
+  };
+}
+
+export function isXAuthPath(pathname: string): boolean {
+  return X_AUTH_PATH_PREFIXES.some((prefix) => pathname.startsWith(prefix));
+}
+
+export function resolveXAuthentication(pathname: string, signals: XAuthSignals): boolean {
+  if (isXAuthPath(pathname)) {
+    return false;
+  }
+
+  if (signals.loggedInShellDetected) {
+    return true;
+  }
+
+  if (signals.feedShellDetected) {
+    return true;
+  }
+
+  if (signals.loggedOutMarkersDetected && !signals.feedShellDetected) {
+    return false;
+  }
+
+  // Treat unknown shell state as authenticated to avoid false negatives while feed shell hydrates.
+  return true;
+}
+
+export function isXFeedPath(pathname: string): boolean {
   return (
-    pathname === "/" ||
     pathname === "/home" ||
     pathname.startsWith("/i/bookmarks") ||
     pathname.startsWith("/i/lists/") ||
@@ -789,6 +849,32 @@ function isFeedPath(pathname: string): boolean {
 
 function isDetailPath(pathname: string): boolean {
   return pathname.includes("/status/") || pathname.includes("/photo/") || pathname.includes("/video/");
+}
+
+function touchesFeedStructure(node: Node): boolean {
+  if (!(node instanceof Element)) {
+    return false;
+  }
+
+  return node.matches(FEED_STRUCTURE_MUTATION_SELECTOR) || Boolean(node.querySelector(FEED_STRUCTURE_MUTATION_SELECTOR));
+}
+
+function hasFeedStructureMutation(records: MutationRecord[]): boolean {
+  for (const record of records) {
+    for (const node of record.addedNodes) {
+      if (touchesFeedStructure(node)) {
+        return true;
+      }
+    }
+
+    for (const node of record.removedNodes) {
+      if (touchesFeedStructure(node)) {
+        return true;
+      }
+    }
+  }
+
+  return false;
 }
 
 export class XAdapter implements Adapter {
@@ -804,9 +890,24 @@ export class XAdapter implements Adapter {
     }
   }
 
+  isAuthenticated(url: string): boolean {
+    try {
+      if (!this.isSupportedUrl(url)) {
+        return false;
+      }
+
+      const pathname = new URL(url).pathname;
+      const root = typeof document === "undefined" ? null : document;
+      return resolveXAuthentication(pathname, detectXAuthSignals(root));
+    } catch {
+      return false;
+    }
+  }
+
   isFeedPage(url: string): boolean {
     try {
-      return this.isSupportedUrl(url) && isFeedPath(new URL(url).pathname);
+      const parsed = new URL(url);
+      return this.isSupportedUrl(url) && this.isAuthenticated(url) && isXFeedPath(parsed.pathname);
     } catch {
       return false;
     }
@@ -1008,7 +1109,11 @@ export class XAdapter implements Adapter {
     const target = document.querySelector("main") ?? document.body;
     let rafId = 0;
 
-    const observer = new MutationObserver(() => {
+    const observer = new MutationObserver((records) => {
+      if (!hasFeedStructureMutation(records)) {
+        return;
+      }
+
       if (rafId) {
         return;
       }

@@ -3,6 +3,7 @@ import { AdapterRegistry } from "@/core/adapter-registry";
 import { ActionDispatcher } from "@/core/action-dispatcher";
 import { isDailyLimitReached } from "@/core/daily-counter";
 import { DeckEngine } from "@/core/deck-engine";
+import { resolveSessionStartConfig } from "@/core/session-config";
 import { installKeyboardShortcuts } from "@/content/keyboard";
 import { OverlayController } from "@/content/overlay/overlay";
 import { browserApi } from "@/shared/browser-polyfill";
@@ -24,6 +25,8 @@ registry.register(new XAdapter());
 const adapter = registry.resolve(window.location.href);
 
 const FOCUS_STYLE_ID = "focusdeck-native-layer-style";
+const FEED_STRUCTURE_MUTATION_SELECTOR =
+  "article[data-testid='tweet'], article[role='article'], [data-testid='cellInnerDiv'], [data-testid='placementTracking'], [data-testid='primaryColumn']";
 const dispatcher = new ActionDispatcher();
 
 let overlay: OverlayController | null = null;
@@ -39,8 +42,15 @@ let postLimitViewedProgressKeys = new Set<string>();
 let postLimitEnforceRafId = 0;
 let lastRoute = window.location.href;
 let feedLocked = false;
+let auxiliaryUiHiddenState: boolean | null = null;
 let feedMutationObserver: MutationObserver | null = null;
 let feedMutationRafId = 0;
+let lastFocusedVideoHydrationPostId: string | null = null;
+let idleRouteSyncInFlight = false;
+let focusLayerFreezePostId: string | null = null;
+let focusLayerFreezeUntil = 0;
+let videoPlaybackBypassPostId: string | null = null;
+let videoPlaybackBypassUntil = 0;
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -293,6 +303,14 @@ function ensureFocusLayerStyle(): void {
       pointer-events: auto !important;
       transition: opacity 120ms ease;
     }
+
+    [data-focusdeck-dimmed='true'] {
+      visibility: visible !important;
+      opacity: 0.38 !important;
+      filter: saturate(0.75) !important;
+      pointer-events: none !important;
+      transition: opacity 120ms ease;
+    }
   `;
   document.head.append(style);
 }
@@ -372,12 +390,16 @@ function enablePostLimitExploreMode(viewedProgressKeys: Set<string>): void {
   enforcePostLimitExploreMode();
 }
 
-function setFeedLocked(locked: boolean): void {
+function setFeedLocked(locked: boolean, force = false): void {
   if (!adapter) {
     return;
   }
 
   const shouldLock = locked && isFeedRoute(window.location.href);
+  if (!force && feedLocked === shouldLock) {
+    return;
+  }
+
   feedLocked = shouldLock;
 
   for (const handle of adapter.getFeedItems()) {
@@ -417,7 +439,12 @@ function isAdCell(cell: HTMLElement): boolean {
   return Boolean(marker);
 }
 
-function setAuxiliaryUiHidden(hidden: boolean): void {
+function setAuxiliaryUiHidden(hidden: boolean, force = false): void {
+  if (!force && auxiliaryUiHiddenState === hidden) {
+    return;
+  }
+  auxiliaryUiHiddenState = hidden;
+
   document.querySelectorAll<HTMLElement>("[data-focusdeck-hidden-ui='true']").forEach((node) => {
     node.removeAttribute("data-focusdeck-hidden-ui");
   });
@@ -475,31 +502,65 @@ function ensureFeedMutationObserver(): void {
     return;
   }
 
-  feedMutationObserver = new MutationObserver(() => {
+  const touchesFeedStructure = (node: Node): boolean => {
+    if (!(node instanceof Element)) {
+      return false;
+    }
+
+    return node.matches(FEED_STRUCTURE_MUTATION_SELECTOR) || Boolean(node.querySelector(FEED_STRUCTURE_MUTATION_SELECTOR));
+  };
+
+  const hasFeedStructureMutation = (records: MutationRecord[]): boolean => {
+    for (const record of records) {
+      for (const node of record.addedNodes) {
+        if (touchesFeedStructure(node)) {
+          return true;
+        }
+      }
+
+      for (const node of record.removedNodes) {
+        if (touchesFeedStructure(node)) {
+          return true;
+        }
+      }
+    }
+
+    return false;
+  };
+
+  feedMutationObserver = new MutationObserver((records) => {
+    if (!hasFeedStructureMutation(records)) {
+      return;
+    }
+
     if (feedMutationRafId) {
       return;
     }
 
     feedMutationRafId = window.requestAnimationFrame(() => {
       feedMutationRafId = 0;
+      setAuxiliaryUiHidden(isFeedRoute(window.location.href), true);
 
       if (postLimitExploreMode) {
         schedulePostLimitEnforcement();
         return;
       }
 
-      if (feedLocked) {
-        setFeedLocked(true);
+      if (!engine) {
+        scheduleIdleRouteSync();
         return;
       }
 
-      if (engine) {
-        const view = engine.getViewState();
-        if (view?.snapshot.phase === "active" && !view.focusedHandle) {
-          engine.focusNearestToViewportCenter(true, false);
-        }
-        applyFocusLayer(engine.getViewState());
+      if (feedLocked) {
+        setFeedLocked(true, true);
+        return;
       }
+
+      const view = engine.getViewState();
+      if (view?.snapshot.phase === "active" && !view.focusedHandle) {
+        engine.focusNearestToViewportCenter(true, false);
+      }
+      applyFocusLayer(engine.getViewState());
     });
   });
 
@@ -509,13 +570,89 @@ function ensureFeedMutationObserver(): void {
   });
 }
 
+function scheduleIdleRouteSync(): void {
+  if (idleRouteSyncInFlight) {
+    return;
+  }
+
+  idleRouteSyncInFlight = true;
+  void (async () => {
+    try {
+      if (engine || postLimitExploreMode) {
+        return;
+      }
+
+      if (!isFeedRoute(window.location.href)) {
+        overlay?.setPromptVisible(false);
+        setAuxiliaryUiHidden(false);
+        setFeedLocked(false);
+        return;
+      }
+
+      if (siteSettings && !siteSettings.enabled) {
+        setAuxiliaryUiHidden(false);
+        setFeedLocked(false);
+        return;
+      }
+
+      if (!feedLocked) {
+        await maybeShowPrompt();
+      }
+    } finally {
+      idleRouteSyncInFlight = false;
+    }
+  })();
+}
+
+function freezeFocusLayerForPost(postId: string | null, durationMs: number): void {
+  if (!postId || durationMs <= 0) {
+    return;
+  }
+
+  focusLayerFreezePostId = postId;
+  focusLayerFreezeUntil = Math.max(focusLayerFreezeUntil, Date.now() + durationMs);
+}
+
+function clearFocusLayerFreezeForPost(postId: string | null): void {
+  if (!postId || focusLayerFreezePostId !== postId) {
+    return;
+  }
+
+  focusLayerFreezePostId = null;
+  focusLayerFreezeUntil = 0;
+}
+
+function enableVideoPlaybackBypass(postId: string | null, durationMs: number): void {
+  if (!postId || durationMs <= 0) {
+    return;
+  }
+
+  videoPlaybackBypassPostId = postId;
+  videoPlaybackBypassUntil = Math.max(videoPlaybackBypassUntil, Date.now() + durationMs);
+}
+
+function clearVideoPlaybackBypass(postId: string | null): void {
+  if (!postId || videoPlaybackBypassPostId !== postId) {
+    return;
+  }
+
+  videoPlaybackBypassPostId = null;
+  videoPlaybackBypassUntil = 0;
+}
+
 function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
   if (!adapter) {
+    lastFocusedVideoHydrationPostId = null;
+    clearFocusLayerFreezeForPost(focusLayerFreezePostId);
+    clearVideoPlaybackBypass(videoPlaybackBypassPostId);
     clearFocusLayer();
     return;
   }
 
   if (view?.snapshot.phase === "paused" && view.snapshot.pauseReason === "details") {
+    lastFocusedVideoHydrationPostId = null;
+    clearFocusLayerFreezeForPost(focusLayerFreezePostId);
+    clearVideoPlaybackBypass(videoPlaybackBypassPostId);
     clearFocusLayer();
     setFeedLocked(false);
     setAuxiliaryUiHidden(false);
@@ -525,6 +662,9 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
   setAuxiliaryUiHidden(isFeedRoute(window.location.href));
 
   if (!view) {
+    lastFocusedVideoHydrationPostId = null;
+    clearFocusLayerFreezeForPost(focusLayerFreezePostId);
+    clearVideoPlaybackBypass(videoPlaybackBypassPostId);
     clearFocusLayer();
     setFeedLocked(true);
     return;
@@ -533,29 +673,204 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
   const phase = view.snapshot.phase;
   const sessionOnFeed = isFeedRoute(window.location.href) && (phase === "active" || phase === "paused");
   if (!sessionOnFeed) {
+    lastFocusedVideoHydrationPostId = null;
+    clearFocusLayerFreezeForPost(focusLayerFreezePostId);
+    clearVideoPlaybackBypass(videoPlaybackBypassPostId);
     clearFocusLayer();
     setFeedLocked(phase !== "active");
     return;
   }
 
+  const focusedId = view.snapshot.focusedPostId;
+  if (focusLayerFreezePostId && focusLayerFreezePostId !== focusedId) {
+    clearFocusLayerFreezeForPost(focusLayerFreezePostId);
+  }
+  if (videoPlaybackBypassPostId && videoPlaybackBypassPostId !== focusedId) {
+    clearVideoPlaybackBypass(videoPlaybackBypassPostId);
+  }
+
+  const bypassActive = Boolean(focusedId && videoPlaybackBypassPostId === focusedId && Date.now() < videoPlaybackBypassUntil);
+  const freezeActive = Boolean(focusedId && focusLayerFreezePostId === focusedId && Date.now() < focusLayerFreezeUntil);
+
   setFeedLocked(false);
 
-  const focusedId = view.snapshot.focusedPostId;
   const handles = adapter.getFeedItems();
+  if (bypassActive) {
+    setAuxiliaryUiHidden(false);
+
+    for (const handle of handles) {
+      if (focusedId && handle.id === focusedId) {
+        if (!handle.element.hasAttribute("data-focusdeck-focused")) {
+          handle.element.setAttribute("data-focusdeck-focused", "true");
+        }
+      } else if (handle.element.hasAttribute("data-focusdeck-focused")) {
+        handle.element.removeAttribute("data-focusdeck-focused");
+      }
+
+      if (handle.element.hasAttribute("data-focusdeck-hidden")) {
+        handle.element.removeAttribute("data-focusdeck-hidden");
+      }
+      if (handle.element.hasAttribute("data-focusdeck-dimmed")) {
+        handle.element.removeAttribute("data-focusdeck-dimmed");
+      }
+      if (handle.element.hasAttribute("data-focusdeck-locked")) {
+        handle.element.removeAttribute("data-focusdeck-locked");
+      }
+    }
+
+    hydrateFocusedPostVideos(view.focusedHandle?.element ?? null, focusedId);
+    return;
+  }
+
+  if (freezeActive) {
+    hydrateFocusedPostVideos(view.focusedHandle?.element ?? null, focusedId);
+    return;
+  }
 
   for (const handle of handles) {
     if (focusedId && handle.id === focusedId) {
-      handle.element.setAttribute("data-focusdeck-focused", "true");
-      handle.element.removeAttribute("data-focusdeck-hidden");
-      handle.element.removeAttribute("data-focusdeck-dimmed");
-      handle.element.removeAttribute("data-focusdeck-locked");
+      if (!handle.element.hasAttribute("data-focusdeck-focused")) {
+        handle.element.setAttribute("data-focusdeck-focused", "true");
+      }
+      if (handle.element.hasAttribute("data-focusdeck-hidden")) {
+        handle.element.removeAttribute("data-focusdeck-hidden");
+      }
+      if (handle.element.hasAttribute("data-focusdeck-dimmed")) {
+        handle.element.removeAttribute("data-focusdeck-dimmed");
+      }
+      if (handle.element.hasAttribute("data-focusdeck-locked")) {
+        handle.element.removeAttribute("data-focusdeck-locked");
+      }
     } else {
-      handle.element.setAttribute("data-focusdeck-hidden", "true");
-      handle.element.removeAttribute("data-focusdeck-focused");
-      handle.element.removeAttribute("data-focusdeck-dimmed");
-      handle.element.removeAttribute("data-focusdeck-locked");
+      if (!handle.element.hasAttribute("data-focusdeck-hidden")) {
+        handle.element.setAttribute("data-focusdeck-hidden", "true");
+      }
+      if (handle.element.hasAttribute("data-focusdeck-focused")) {
+        handle.element.removeAttribute("data-focusdeck-focused");
+      }
+      if (handle.element.hasAttribute("data-focusdeck-dimmed")) {
+        handle.element.removeAttribute("data-focusdeck-dimmed");
+      }
+      if (handle.element.hasAttribute("data-focusdeck-locked")) {
+        handle.element.removeAttribute("data-focusdeck-locked");
+      }
     }
   }
+
+  hydrateFocusedPostVideos(view.focusedHandle?.element ?? null, focusedId);
+}
+
+function hydrateFocusedPostVideos(focusedElement: HTMLElement | null, focusedPostId: string | null): void {
+  if (!focusedElement || !focusedPostId) {
+    lastFocusedVideoHydrationPostId = null;
+    return;
+  }
+
+  const videos = Array.from(focusedElement.querySelectorAll<HTMLVideoElement>("video"));
+  if (!videos.length) {
+    lastFocusedVideoHydrationPostId = focusedPostId;
+    return;
+  }
+
+  for (const video of videos) {
+    if (video.preload === "" || video.preload === "none" || video.preload === "metadata") {
+      video.preload = "auto";
+    }
+    video.playsInline = true;
+    video.setAttribute("playsinline", "");
+  }
+
+  lastFocusedVideoHydrationPostId = focusedPostId;
+}
+
+function registerVideoPlaybackStabilityGuard(): void {
+  const isTargetInsideFocusedVideo = (target: EventTarget | null): { postId: string | null; matched: boolean } => {
+    if (!(target instanceof Element) || !engine || engine.getPhase() !== "active") {
+      return { postId: null, matched: false };
+    }
+
+    const view = engine.getViewState();
+    const focusedId = view?.snapshot.focusedPostId ?? null;
+    const focusedElement = view?.focusedHandle?.element ?? null;
+    if (!focusedId || !focusedElement) {
+      return { postId: null, matched: false };
+    }
+
+    const videoSurface = target.closest<HTMLElement>(
+      "video, [data-testid='videoComponent'], [data-testid='videoPlayer'], [data-testid*='video'], [data-testid*='play'], [aria-label*='Play'], [aria-label*='play'], [aria-label*='Pause'], [aria-label*='pause']"
+    );
+    if (!videoSurface || !focusedElement.contains(videoSurface)) {
+      return { postId: null, matched: false };
+    }
+
+    return { postId: focusedId, matched: true };
+  };
+
+  const freezeOn = (target: EventTarget | null, durationMs: number): void => {
+    const { postId, matched } = isTargetInsideFocusedVideo(target);
+    if (!matched) {
+      return;
+    }
+
+    freezeFocusLayerForPost(postId, durationMs);
+    enableVideoPlaybackBypass(postId, Math.min(durationMs, 20_000));
+  };
+
+  const clearOn = (target: EventTarget | null): void => {
+    const { postId, matched } = isTargetInsideFocusedVideo(target);
+    if (!matched) {
+      return;
+    }
+
+    clearFocusLayerFreezeForPost(postId);
+    clearVideoPlaybackBypass(postId);
+  };
+
+  document.addEventListener("pointerdown", (event) => {
+    freezeOn(event.target, 8000);
+  }, true);
+
+  document.addEventListener("click", (event) => {
+    freezeOn(event.target, 8000);
+  }, true);
+
+  document.addEventListener("play", (event) => {
+    freezeOn(event.target, 180_000);
+    const { postId, matched } = isTargetInsideFocusedVideo(event.target);
+    if (matched) {
+      enableVideoPlaybackBypass(postId, 180_000);
+    }
+  }, true);
+
+  document.addEventListener("playing", (event) => {
+    freezeOn(event.target, 180_000);
+    const { postId, matched } = isTargetInsideFocusedVideo(event.target);
+    if (matched) {
+      enableVideoPlaybackBypass(postId, 180_000);
+    }
+  }, true);
+
+  document.addEventListener("waiting", (event) => {
+    freezeOn(event.target, 90_000);
+    const { postId, matched } = isTargetInsideFocusedVideo(event.target);
+    if (matched) {
+      enableVideoPlaybackBypass(postId, 90_000);
+    }
+  }, true);
+
+  document.addEventListener("pause", (event) => {
+    const target = event.target;
+    window.setTimeout(() => {
+      if (target instanceof HTMLMediaElement && !target.paused) {
+        return;
+      }
+      clearOn(target);
+    }, 700);
+  }, true);
+
+  document.addEventListener("ended", (event) => {
+    clearOn(event.target);
+  }, true);
 }
 
 async function maybeShowPrompt(): Promise<void> {
@@ -628,16 +943,15 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
     return false;
   }
 
-  const nextConfig: SessionConfig = {
-    ...baseConfig,
-    ...overrides
-  };
-  const remainingPosts =
-    dailyLimits.global.maxPosts > 0 ? Math.max(0, dailyLimits.global.maxPosts - dailyUsage.global.postsViewed) : 0;
-  if (nextConfig.mode === "posts" && dailyLimits.global.maxPosts > 0 && remainingPosts > 0 && nextConfig.postLimit > remainingPosts) {
-    nextConfig.postLimit = remainingPosts;
+  const resumeForAdapter = resumeSnapshot && resumeSnapshot.adapterId === adapter.id ? resumeSnapshot : null;
+  const resolved = resolveSessionStartConfig(baseConfig, overrides, resumeForAdapter, dailyLimits, dailyUsage);
+  const nextConfig = resolved.config;
+
+  if (resolved.cappedByDailyLimit && resolved.remainingPosts !== null) {
+    const remainingPosts = resolved.remainingPosts;
     setStatus(`Total daily limit allows ${remainingPosts} more post${remainingPosts === 1 ? "" : "s"} today.`);
   }
+
   applyThemeModeFromConfig(nextConfig);
   clearPostLimitExploreMode();
 
@@ -687,7 +1001,7 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
 
   while (Date.now() < startDeadline) {
     attempts += 1;
-    started = await engine.start(nextConfig, resumeSnapshot);
+    started = await engine.start(nextConfig, resumeForAdapter);
     if (started) {
       break;
     }
@@ -839,6 +1153,10 @@ function isFeedRoute(url: string): boolean {
     return false;
   }
 
+  if (adapter.isAuthenticated && !adapter.isAuthenticated(url)) {
+    return false;
+  }
+
   if (adapter.isFeedPage) {
     return adapter.isFeedPage(url);
   }
@@ -918,50 +1236,6 @@ function registerBlockedPostInteractionGuard(): void {
   document.addEventListener("auxclick", blockEvent, true);
   document.addEventListener("dblclick", blockEvent, true);
   document.addEventListener("contextmenu", blockEvent, true);
-}
-
-function registerDetailClickGuard(): void {
-  document.addEventListener(
-    "click",
-    (event) => {
-      if (!engine || engine.getPhase() !== "active") {
-        return;
-      }
-
-      if (event.defaultPrevented) {
-        return;
-      }
-
-      const target = event.target;
-      if (!(target instanceof Element)) {
-        return;
-      }
-
-      const detailAnchor = target.closest<HTMLAnchorElement>("a[href*='/status/'], a[href*='/photo/'], a[href*='/video/']");
-      if (!detailAnchor) {
-        return;
-      }
-
-      const targetValue = detailAnchor.target.toLowerCase();
-      const opensDifferentContext =
-        targetValue !== "" &&
-        targetValue !== "_self" &&
-        targetValue !== "_top" &&
-        targetValue !== "_parent";
-      if (opensDifferentContext || detailAnchor.hasAttribute("download")) {
-        return;
-      }
-
-      if (event.button !== 0 || event.metaKey || event.ctrlKey || event.shiftKey || event.altKey) {
-        return;
-      }
-
-      void engine.pause("details");
-      setAuxiliaryUiHidden(false);
-      setFeedLocked(false);
-    },
-    true
-  );
 }
 
 async function handleRouteChange(): Promise<void> {
@@ -1133,7 +1407,7 @@ async function bootstrap(): Promise<void> {
   ensureFeedMutationObserver();
   registerPostLimitViewportGuard();
   registerBlockedPostInteractionGuard();
-  registerDetailClickGuard();
+  registerVideoPlaybackStabilityGuard();
   registerConfigThemeWatcher();
   wrapHistoryRouting();
   registerMessageHandlers();
