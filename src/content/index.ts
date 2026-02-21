@@ -527,7 +527,7 @@ function ensureFeedMutationObserver(): void {
 
     feedMutationRafId = window.requestAnimationFrame(() => {
       feedMutationRafId = 0;
-      setAuxiliaryUiHidden(isFeedRoute(window.location.href), true);
+      setAuxiliaryUiHidden(postLimitExploreMode ? false : isFeedRoute(window.location.href), true);
 
       if (postLimitExploreMode) {
         schedulePostLimitEnforcement();
@@ -988,7 +988,7 @@ async function maybeShowPrompt(): Promise<void> {
 
   if (postLimitExploreMode) {
     setFeedLocked(false);
-    setAuxiliaryUiHidden(true);
+    setAuxiliaryUiHidden(false);
     ensureOverlay().setPromptVisible(false);
     schedulePostLimitEnforcement();
     return;
@@ -1176,7 +1176,7 @@ async function finishPostLimitSession(): Promise<void> {
   }
 
   clearFocusLayer();
-  setAuxiliaryUiHidden(true);
+  setAuxiliaryUiHidden(false);
   setFeedLocked(false);
   enablePostLimitExploreMode(viewedProgressKeys);
   clearResumeRecoveryTimers();

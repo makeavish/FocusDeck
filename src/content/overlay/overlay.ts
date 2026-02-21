@@ -286,23 +286,34 @@ export class OverlayController {
 
     const title = document.createElement("h3");
     title.className = "fd-surface-title";
-    title.textContent = "Start your focused session";
+    title.textContent = "Start session";
 
     const copy = document.createElement("p");
     copy.className = "fd-surface-body";
-    copy.textContent =
-      "Choose a post target. FocusDeck will show one post at a time and end this session when you reach the target.";
+    copy.textContent = "Review one post at a time.";
 
-    const valueLabel = document.createElement("label");
-    valueLabel.className = "fd-field";
-    valueLabel.textContent = "Session post target";
+    const target = document.createElement("section");
+    target.className = "fd-target";
 
-    const helper = document.createElement("small");
-    helper.className = "fd-field-hint";
-    helper.textContent = "How many posts do you want to intentionally review in this session?";
-    valueLabel.append(helper);
+    const targetHead = document.createElement("div");
+    targetHead.className = "fd-target-head";
+
+    const targetLabel = document.createElement("span");
+    targetLabel.className = "fd-target-label";
+    targetLabel.textContent = "Posts this session";
+    targetHead.append(targetLabel);
+
+    if (this.state.prompt.postLimitCap !== null) {
+      const badge = document.createElement("span");
+      badge.className = "fd-target-badge";
+      badge.textContent = `${this.state.prompt.postLimitCap} left today`;
+      targetHead.append(badge);
+    }
+
+    target.append(targetHead);
 
     const valueSelect = document.createElement("select");
+    valueSelect.className = "fd-target-select";
     const appendOption = (value: string, label = value) => {
       const option = document.createElement("option");
       option.value = value;
@@ -316,21 +327,15 @@ export class OverlayController {
     }
     appendOption("custom", "Custom post target");
 
-    if (this.state.prompt.postLimitCap !== null) {
-      const hint = document.createElement("small");
-      hint.className = "fd-field-hint";
-      hint.textContent = `Remaining today: ${this.state.prompt.postLimitCap} posts`;
-      valueLabel.append(hint);
-    }
-
     valueSelect.value = this.state.prompt.preset;
     valueSelect.addEventListener("change", () => {
       this.state.prompt.preset = valueSelect.value;
       this.render();
     });
-    valueLabel.append(valueSelect);
+    target.append(valueSelect);
 
     const customInput = document.createElement("input");
+    customInput.className = "fd-target-custom";
     customInput.type = "number";
     customInput.min = "1";
     customInput.step = "1";
@@ -341,16 +346,7 @@ export class OverlayController {
     }
     customInput.value = String(this.state.prompt.customValue);
     customInput.style.display = this.state.prompt.preset === "custom" ? "block" : "none";
-    customInput.addEventListener("change", () => {
-      const raw = Math.max(1, Math.floor(Number(customInput.value) || 1));
-      if (this.state.prompt.postLimitCap !== null) {
-        this.state.prompt.customValue = Math.min(this.state.prompt.postLimitCap, raw);
-      } else {
-        this.state.prompt.customValue = raw;
-      }
-      customInput.value = String(this.state.prompt.customValue);
-    });
-    valueLabel.append(customInput);
+    target.append(customInput);
 
     const actions = document.createElement("div");
     actions.className = "fd-surface-actions";
@@ -358,21 +354,33 @@ export class OverlayController {
     const start = document.createElement("button");
     start.type = "button";
     start.className = "fd-surface-btn primary";
-    start.textContent = "Start focused session";
-    start.addEventListener("click", () => {
-      const raw =
-        this.state.prompt.preset === "custom" ? this.state.prompt.customValue : Number(this.state.prompt.preset);
-      let value = Math.max(1, Math.floor(raw || 1));
 
+    const updateStartLabel = () => {
+      const value = this.resolvePromptPostLimitValue();
+      start.textContent = `Start ${value}-post session`;
+    };
+
+    const syncCustomValue = () => {
+      const raw = Math.max(1, Math.floor(Number(customInput.value) || 1));
       if (this.state.prompt.postLimitCap !== null) {
-        value = Math.min(this.state.prompt.postLimitCap, value);
+        this.state.prompt.customValue = Math.min(this.state.prompt.postLimitCap, raw);
+      } else {
+        this.state.prompt.customValue = raw;
       }
+      customInput.value = String(this.state.prompt.customValue);
+      updateStartLabel();
+    };
+    customInput.addEventListener("input", syncCustomValue);
+    customInput.addEventListener("change", syncCustomValue);
 
+    updateStartLabel();
+    start.addEventListener("click", () => {
+      const value = this.resolvePromptPostLimitValue();
       this.callbacks.onStartSession({ postLimit: value });
     });
 
     actions.append(start);
-    prompt.append(title, copy, valueLabel, actions);
+    prompt.append(title, copy, target, actions);
     backdrop.append(prompt);
     return backdrop;
   }
@@ -471,6 +479,16 @@ export class OverlayController {
     }
 
     return Array.from(new Set(allowed)).sort((a, b) => a - b);
+  }
+
+  private resolvePromptPostLimitValue(): number {
+    const raw = this.state.prompt.preset === "custom" ? this.state.prompt.customValue : Number(this.state.prompt.preset);
+    let value = Math.max(1, Math.floor(raw || 1));
+    const cap = this.state.prompt.postLimitCap;
+    if (cap !== null) {
+      value = Math.min(cap, value);
+    }
+    return value;
   }
 
   private normalizePromptPostLimit(): void {
