@@ -61,6 +61,23 @@ async function closeSenderTab(senderTabId?: number): Promise<void> {
   await browserApi.tabs.remove(activeTab.id);
 }
 
+async function openBackgroundTab(url: string, senderWindowId?: number): Promise<void> {
+  const createOptions: {
+    url: string;
+    active: boolean;
+    windowId?: number;
+  } = {
+    url,
+    active: false
+  };
+
+  if (typeof senderWindowId === "number") {
+    createOptions.windowId = senderWindowId;
+  }
+
+  await browserApi.tabs.create(createOptions);
+}
+
 browserApi.runtime.onInstalled.addListener((details) => {
   if (details.reason !== "install") {
     return;
@@ -80,7 +97,7 @@ browserApi.action.onClicked.addListener(() => {
   void openSettingsPage();
 });
 
-browserApi.runtime.onMessage.addListener((rawMessage: unknown, sender: { tab?: { id?: number } }): Promise<RuntimeResponse> | RuntimeResponse | void => {
+browserApi.runtime.onMessage.addListener((rawMessage: unknown, sender: { tab?: { id?: number; windowId?: number } }): Promise<RuntimeResponse> | RuntimeResponse | void => {
   const message = rawMessage as RuntimeMessage;
   if (message.type === "focusdeck:get-config") {
     return getSessionConfig()
@@ -160,6 +177,15 @@ browserApi.runtime.onMessage.addListener((rawMessage: unknown, sender: { tab?: {
       .catch((error: unknown) => ({
         ok: false,
         error: error instanceof Error ? error.message : "Failed to close tab."
+      }));
+  }
+
+  if (message.type === "focusdeck:open-background-tab") {
+    return openBackgroundTab(message.url, sender.tab?.windowId)
+      .then(() => ({ ok: true }))
+      .catch((error: unknown) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : "Failed to open background tab."
       }));
   }
 

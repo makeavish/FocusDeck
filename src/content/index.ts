@@ -9,6 +9,7 @@ import { OverlayController } from "@/content/overlay/overlay";
 import { browserApi } from "@/shared/browser-polyfill";
 import { STORAGE_KEYS } from "@/shared/constants";
 import {
+  clearSessionSnapshot,
   getDailyLimits,
   getDailyUsage,
   getSessionConfig,
@@ -41,6 +42,7 @@ let postLimitExploreMode = false;
 let postLimitViewedProgressKeys = new Set<string>();
 let postLimitEnforceRafId = 0;
 let lastRoute = window.location.href;
+let routeFallbackTimerId: number | null = null;
 let feedLocked = false;
 let auxiliaryUiHiddenState: boolean | null = null;
 let feedMutationObserver: MutationObserver | null = null;
@@ -107,6 +109,9 @@ function ensureOverlay(): OverlayController {
     },
     onAction: (action) => {
       void runAction(action, true);
+    },
+    onOpenPost: () => {
+      void openFocusedPostInBackground();
     },
     onDismissComplete: () => {
       void stopSession();
@@ -1055,6 +1060,9 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
     onNotInterested: () => {
       void runAction("notInterested", true);
     },
+    onOpenPost: () => {
+      void openFocusedPostInBackground();
+    },
     onOverlayToggle: () => {
       toggleOverlaySuppression();
     }
@@ -1134,6 +1142,35 @@ async function runAction(action: AdapterAction, userGesture: boolean): Promise<v
   const result = await engine.runAction(action, userGesture);
   if (result.message) {
     setStatus(result.message);
+  }
+}
+
+async function openFocusedPostInBackground(): Promise<void> {
+  if (!engine || engine.getPhase() !== "active") {
+    setStatus("Start or resume a session first.");
+    return;
+  }
+
+  const permalink = engine.getViewState()?.focusedMeta?.permalink;
+  if (!permalink) {
+    setStatus("Unable to find this post link.");
+    return;
+  }
+
+  try {
+    const response = (await browserApi.runtime.sendMessage({
+      type: "focusdeck:open-background-tab",
+      url: permalink
+    })) as RuntimeResponse | undefined;
+
+    if (!response?.ok) {
+      throw new Error(response?.error || "Failed to open background tab.");
+    }
+
+    setStatus("Opened post in background tab.", 1800);
+  } catch {
+    window.open(permalink, "_blank", "noopener,noreferrer");
+    setStatus("Opened post in new tab.", 1800);
   }
 }
 
@@ -1346,6 +1383,20 @@ function wrapHistoryRouting(): void {
   });
 }
 
+function registerRouteFallbackWatcher(): void {
+  if (routeFallbackTimerId !== null) {
+    return;
+  }
+
+  routeFallbackTimerId = window.setInterval(() => {
+    if (window.location.href === lastRoute) {
+      return;
+    }
+
+    void handleRouteChange();
+  }, 220);
+}
+
 function registerMessageHandlers(): void {
   browserApi.runtime.onMessage.addListener((rawMessage: unknown): Promise<RuntimeResponse> | void => {
     const message = rawMessage as RuntimeMessage;
@@ -1388,6 +1439,15 @@ async function maybeResumeSession(): Promise<void> {
     return;
   }
 
+  const resumableSnapshot =
+    snapshot.phase === "paused" && (snapshot.pauseReason === "details" || snapshot.pauseReason === "navigation");
+
+  if (!resumableSnapshot) {
+    await clearSessionSnapshot();
+    await maybeShowPrompt();
+    return;
+  }
+
   const started = await startSession({}, snapshot);
   if (started) {
     setStatus("Resumed session.", 2000);
@@ -1410,6 +1470,7 @@ async function bootstrap(): Promise<void> {
   registerVideoPlaybackStabilityGuard();
   registerConfigThemeWatcher();
   wrapHistoryRouting();
+  registerRouteFallbackWatcher();
   registerMessageHandlers();
   applyThemeModeFromConfig(await getSessionConfig());
   setAuxiliaryUiHidden(isFeedRoute(window.location.href));

@@ -16,7 +16,8 @@ export type RuntimeMessage =
   | { type: "focusdeck:clear-session-snapshot" }
   | { type: "focusdeck:clear-daily-usage" }
   | { type: "focusdeck:open-settings" }
-  | { type: "focusdeck:close-tab" };
+  | { type: "focusdeck:close-tab" }
+  | { type: "focusdeck:open-background-tab"; url: string };
 
 export type RuntimeResponse<T = unknown> = {
   ok: boolean;

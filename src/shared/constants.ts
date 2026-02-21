@@ -18,6 +18,7 @@ export const KEY_BINDINGS = {
   previous: ["k", "K", "ArrowUp"],
   bookmark: ["s", "S"],
   notInterested: ["x", "X"],
+  openPost: ["o", "O"],
   toggleOverlay: ["Escape"]
 } as const;
 

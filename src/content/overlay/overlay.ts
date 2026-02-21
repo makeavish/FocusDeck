@@ -7,6 +7,7 @@ import overlayStyles from "@/content/overlay/styles.css?inline";
 export interface OverlayCallbacks {
   onStartSession: (partial: Partial<SessionConfig>) => void;
   onAction: (action: AdapterAction) => void;
+  onOpenPost: () => void;
   onDismissComplete: () => void;
   onStartNewSession: () => void;
   onExtendPosts: () => void;
@@ -106,7 +107,6 @@ export class OverlayController {
     const previousView = this.state.view;
     this.state.view = view;
     if (this.shouldSkipRenderForViewChange(previousView, view)) {
-      this.syncFloatingPosition(view);
       return;
     }
     this.render();
@@ -241,19 +241,6 @@ export class OverlayController {
     return true;
   }
 
-  private syncFloatingPosition(view: DeckViewState | null): void {
-    if (!view || !this.app) {
-      return;
-    }
-
-    const actionPill = this.app.querySelector<HTMLElement>(".fd-action-pill");
-    if (!actionPill) {
-      return;
-    }
-
-    this.positionActionPill(actionPill, view.focusedHandle?.element ?? null);
-  }
-
   private renderFloating(): HTMLElement | null {
     const view = this.state.view;
     if (!view) {
@@ -267,6 +254,9 @@ export class OverlayController {
 
     const shell = document.createElement("section");
     shell.className = "fd-floating-layer";
+
+    const dock = document.createElement("aside");
+    dock.className = "fd-top-dock";
 
     const progress = document.createElement("aside");
     progress.className = "fd-progress-pill";
@@ -291,12 +281,13 @@ export class OverlayController {
     };
 
     row.append(
+      button("Open", "O", this.callbacks.onOpenPost),
       button("Save", "S", () => this.callbacks.onAction("bookmark")),
-      button("Not interested", "X", () => this.callbacks.onAction("notInterested"), "danger")
+      button("Hide", "X", () => this.callbacks.onAction("notInterested"), "danger")
     );
 
-    this.positionActionPill(row, view.focusedHandle?.element ?? null);
-    shell.append(progress, row);
+    dock.append(progress, row);
+    shell.append(dock);
     return shell;
   }
 
@@ -307,38 +298,6 @@ export class OverlayController {
     }
 
     return `${snapshot.stats.viewedCount} posts`;
-  }
-
-  private positionActionPill(node: HTMLElement, anchor: HTMLElement | null): void {
-    const estimatedHeight = 56;
-    const margin = 12;
-    const defaultTop = Math.max(margin, window.innerHeight - estimatedHeight - 18);
-    let left = Math.floor(window.innerWidth / 2);
-    let top = defaultTop;
-
-    if (anchor) {
-      const anchorRect = anchor.getBoundingClientRect();
-      left = Math.floor(anchorRect.left + anchorRect.width / 2);
-
-      const nativeActionRow = anchor.querySelector<HTMLElement>("[role='group']");
-      const rowRect = nativeActionRow?.getBoundingClientRect() ?? null;
-
-      if (rowRect && rowRect.bottom > 0 && rowRect.top < window.innerHeight) {
-        const belowRow = Math.floor(rowRect.bottom + 10);
-        const aboveRow = Math.floor(rowRect.top - estimatedHeight - 10);
-
-        if (belowRow + estimatedHeight <= window.innerHeight - margin) {
-          top = belowRow;
-        } else if (aboveRow >= margin) {
-          top = aboveRow;
-        } else {
-          top = defaultTop;
-        }
-      }
-    }
-
-    node.style.left = `${Math.max(32, Math.min(window.innerWidth - 32, left))}px`;
-    node.style.top = `${Math.max(margin, Math.min(window.innerHeight - estimatedHeight - margin, top))}px`;
   }
 
   private resolveTheme(): "dark" | "light" {

@@ -5,6 +5,7 @@ export interface KeyboardHandlers {
   onPrevious: () => void;
   onBookmark: () => void;
   onNotInterested: () => void;
+  onOpenPost: () => void;
   onOverlayToggle: () => void;
 }
 
@@ -46,6 +47,12 @@ export function installKeyboardShortcuts(handlers: KeyboardHandlers): () => void
     if (KEY_BINDINGS.notInterested.includes(key as (typeof KEY_BINDINGS.notInterested)[number])) {
       event.preventDefault();
       handlers.onNotInterested();
+      return;
+    }
+
+    if (KEY_BINDINGS.openPost.includes(key as (typeof KEY_BINDINGS.openPost)[number])) {
+      event.preventDefault();
+      handlers.onOpenPost();
       return;
     }
 
