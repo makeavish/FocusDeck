@@ -6,6 +6,16 @@ import { DeckEngine } from "@/core/deck-engine";
 import { resolveSessionStartConfig } from "@/core/session-config";
 import { installKeyboardShortcuts } from "@/content/keyboard";
 import { OverlayController } from "@/content/overlay/overlay";
+import {
+  expandPostLimitViewedKeys,
+  isHandleViewedInPostLimit,
+  type PostLimitHandleKey
+} from "@/content/post-limit-keys";
+import {
+  resolveVideoPlaybackGuardDecision,
+  type VideoPlaybackGuardEvent,
+  type VideoPlaybackGuardMutation
+} from "@/content/video-playback-guard";
 import { browserApi } from "@/shared/browser-polyfill";
 import { STORAGE_KEYS } from "@/shared/constants";
 import {
@@ -317,11 +327,17 @@ function enforcePostLimitExploreMode(): void {
 
   for (const handle of adapter.getFeedItems()) {
     const progressKey = adapter.getProgressKey ? adapter.getProgressKey(handle) : handle.id;
-    const viewed = Boolean(progressKey && postLimitViewedProgressKeys.has(progressKey));
+    const viewed = isHandleViewedInPostLimit(postLimitViewedProgressKeys, handle.id, progressKey);
 
     if (viewed) {
       handle.element.removeAttribute("data-focusdeck-post-limit-blocked");
       (handle.element as HTMLElement & { inert?: boolean }).inert = false;
+
+      // Keep both key forms for viewed posts so DOM key transitions remain playable.
+      postLimitViewedProgressKeys.add(handle.id);
+      if (progressKey) {
+        postLimitViewedProgressKeys.add(progressKey);
+      }
     } else {
       handle.element.setAttribute("data-focusdeck-post-limit-blocked", "true");
       (handle.element as HTMLElement & { inert?: boolean }).inert = true;
@@ -346,7 +362,11 @@ function enablePostLimitExploreMode(viewedProgressKeys: Set<string>): void {
   }
 
   postLimitExploreMode = true;
-  postLimitViewedProgressKeys = new Set(viewedProgressKeys);
+  const currentHandleKeys: PostLimitHandleKey[] = adapter.getFeedItems().map((handle) => ({
+    handleId: handle.id,
+    progressKey: adapter.getProgressKey ? adapter.getProgressKey(handle) : handle.id
+  }));
+  postLimitViewedProgressKeys = expandPostLimitViewedKeys(new Set(viewedProgressKeys), currentHandleKeys);
   enforcePostLimitExploreMode();
 }
 
@@ -564,40 +584,110 @@ function scheduleIdleRouteSync(): void {
   })();
 }
 
-function freezeFocusLayerForPost(postId: string | null, durationMs: number): void {
+function freezeFocusLayerForPost(postId: string | null, durationMs: number): boolean {
   if (!postId || durationMs <= 0) {
-    return;
+    return false;
   }
 
+  const nextUntil = Math.max(focusLayerFreezeUntil, Date.now() + durationMs);
+  const changed = focusLayerFreezePostId !== postId || focusLayerFreezeUntil !== nextUntil;
   focusLayerFreezePostId = postId;
-  focusLayerFreezeUntil = Math.max(focusLayerFreezeUntil, Date.now() + durationMs);
+  focusLayerFreezeUntil = nextUntil;
+  return changed;
 }
 
-function clearFocusLayerFreezeForPost(postId: string | null): void {
+function clearFocusLayerFreezeForPost(postId: string | null): boolean {
   if (!postId || focusLayerFreezePostId !== postId) {
-    return;
+    return false;
   }
 
+  const changed = focusLayerFreezePostId !== null || focusLayerFreezeUntil !== 0;
   focusLayerFreezePostId = null;
   focusLayerFreezeUntil = 0;
+  return changed;
 }
 
-function enableVideoPlaybackBypass(postId: string | null, durationMs: number): void {
+function enableVideoPlaybackBypass(postId: string | null, durationMs: number): boolean {
   if (!postId || durationMs <= 0) {
-    return;
+    return false;
   }
 
+  const nextUntil = Math.max(videoPlaybackBypassUntil, Date.now() + durationMs);
+  const changed = videoPlaybackBypassPostId !== postId || videoPlaybackBypassUntil !== nextUntil;
   videoPlaybackBypassPostId = postId;
-  videoPlaybackBypassUntil = Math.max(videoPlaybackBypassUntil, Date.now() + durationMs);
+  videoPlaybackBypassUntil = nextUntil;
+  return changed;
 }
 
-function clearVideoPlaybackBypass(postId: string | null): void {
+function clearVideoPlaybackBypass(postId: string | null): boolean {
   if (!postId || videoPlaybackBypassPostId !== postId) {
-    return;
+    return false;
   }
 
+  const changed = videoPlaybackBypassPostId !== null || videoPlaybackBypassUntil !== 0;
   videoPlaybackBypassPostId = null;
   videoPlaybackBypassUntil = 0;
+  return changed;
+}
+
+function applyVideoPlaybackMutation(
+  postId: string | null,
+  mutation: VideoPlaybackGuardMutation,
+  onSet: (postId: string | null, durationMs: number) => boolean,
+  onClear: (postId: string | null) => boolean
+): boolean {
+  if (mutation.mode === "set") {
+    return onSet(postId, mutation.durationMs);
+  }
+
+  if (mutation.mode === "clear") {
+    return onClear(postId);
+  }
+
+  return false;
+}
+
+function createPlaybackFocusLayerSync(): { syncNow: () => void; syncSoon: () => void } {
+  let rafId = 0;
+
+  const sync = (): void => {
+    if (!engine || engine.getPhase() !== "active") {
+      return;
+    }
+
+    let view = engine.getViewState();
+    if (view?.snapshot.phase === "active" && !view.focusedHandle) {
+      engine.focusNearestToViewportCenter(true, false);
+      view = engine.getViewState();
+      if (!view?.focusedHandle) {
+        return;
+      }
+    }
+
+    applyFocusLayer(view);
+  };
+
+  const syncNow = (): void => {
+    if (rafId) {
+      window.cancelAnimationFrame(rafId);
+      rafId = 0;
+    }
+
+    sync();
+  };
+
+  const syncSoon = (): void => {
+    if (rafId) {
+      return;
+    }
+
+    rafId = window.requestAnimationFrame(() => {
+      rafId = 0;
+      sync();
+    });
+  };
+
+  return { syncNow, syncSoon };
 }
 
 function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
@@ -642,6 +732,15 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
   }
 
   const focusedId = view.snapshot.focusedPostId;
+  if (!focusedId) {
+    lastFocusedVideoHydrationPostId = null;
+    clearFocusLayerFreezeForPost(focusLayerFreezePostId);
+    clearVideoPlaybackBypass(videoPlaybackBypassPostId);
+    clearFocusLayer();
+    setFeedLocked(false);
+    return;
+  }
+
   if (focusLayerFreezePostId && focusLayerFreezePostId !== focusedId) {
     clearFocusLayerFreezeForPost(focusLayerFreezePostId);
   }
@@ -651,13 +750,12 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
 
   const focusedElement = view.focusedHandle?.element ?? null;
   const hasReplayablePausedVideo = Boolean(
-    focusedId &&
-      focusedElement &&
+    focusedElement &&
       Array.from(focusedElement.querySelectorAll<HTMLVideoElement>("video")).some(
         (video) => !video.ended && video.paused && (video.currentTime > 0 || video.readyState >= HTMLMediaElement.HAVE_METADATA)
       )
   );
-  if (hasReplayablePausedVideo && focusedId) {
+  if (hasReplayablePausedVideo) {
     freezeFocusLayerForPost(focusedId, 20_000);
     enableVideoPlaybackBypass(focusedId, 20_000);
   }
@@ -757,7 +855,20 @@ function hydrateFocusedPostVideos(focusedElement: HTMLElement | null, focusedPos
 }
 
 function registerVideoPlaybackStabilityGuard(): void {
-  const isTargetInsideFocusedVideo = (target: EventTarget | null): { postId: string | null; matched: boolean } => {
+  const focusLayerSync = createPlaybackFocusLayerSync();
+  const videoSurfaceSelector =
+    "video, [data-testid='videoComponent'], [data-testid='videoPlayer'], [data-testid*='video'], [data-testid*='play'], [aria-label*='Play'], [aria-label*='play'], [aria-label*='Pause'], [aria-label*='pause']";
+  let lastFocusedVideoInteractionPostId: string | null = null;
+  let lastFocusedVideoInteractionAt = 0;
+
+  const isMediaGuardEvent = (eventType: VideoPlaybackGuardEvent): boolean => {
+    return eventType === "play" || eventType === "playing" || eventType === "waiting" || eventType === "pause" || eventType === "ended";
+  };
+
+  const isTargetInsideFocusedVideo = (
+    eventType: VideoPlaybackGuardEvent,
+    target: EventTarget | null
+  ): { postId: string | null; matched: boolean } => {
     if (!(target instanceof Element) || !engine || engine.getPhase() !== "active") {
       return { postId: null, matched: false };
     }
@@ -769,81 +880,93 @@ function registerVideoPlaybackStabilityGuard(): void {
       return { postId: null, matched: false };
     }
 
-    const videoSurface = target.closest<HTMLElement>(
-      "video, [data-testid='videoComponent'], [data-testid='videoPlayer'], [data-testid*='video'], [data-testid*='play'], [aria-label*='Play'], [aria-label*='play'], [aria-label*='Pause'], [aria-label*='pause']"
-    );
+    const videoSurface = target.closest<HTMLElement>(videoSurfaceSelector);
     if (!videoSurface || !focusedElement.contains(videoSurface)) {
+      const insideFocused = focusedElement.contains(target);
+      if (insideFocused && focusedElement.querySelector("video")) {
+        return { postId: focusedId, matched: true };
+      }
+
+      if (
+        isMediaGuardEvent(eventType) &&
+        lastFocusedVideoInteractionPostId === focusedId &&
+        Date.now() - lastFocusedVideoInteractionAt <= 3_000
+      ) {
+        return { postId: focusedId, matched: true };
+      }
+
       return { postId: null, matched: false };
     }
 
     return { postId: focusedId, matched: true };
   };
 
-  const freezeOn = (target: EventTarget | null, durationMs: number): void => {
-    const { postId, matched } = isTargetInsideFocusedVideo(target);
-    if (!matched) {
+  const handlePlaybackGuardEvent = (eventType: VideoPlaybackGuardEvent, target: EventTarget | null): void => {
+    const { postId, matched } = isTargetInsideFocusedVideo(eventType, target);
+    if (matched && (eventType === "pointerdown" || eventType === "click")) {
+      lastFocusedVideoInteractionPostId = postId;
+      lastFocusedVideoInteractionAt = Date.now();
+    }
+
+    const decision = resolveVideoPlaybackGuardDecision({
+      eventType,
+      matchedFocusedVideo: matched,
+      mediaEnded: target instanceof HTMLMediaElement && target.ended
+    });
+    if (decision.syncMode === "none") {
       return;
     }
 
-    freezeFocusLayerForPost(postId, durationMs);
-    enableVideoPlaybackBypass(postId, Math.min(durationMs, 20_000));
-  };
-
-  const clearOn = (target: EventTarget | null): void => {
-    const { postId, matched } = isTargetInsideFocusedVideo(target);
-    if (!matched) {
+    const freezeChanged = applyVideoPlaybackMutation(
+      postId,
+      decision.freeze,
+      freezeFocusLayerForPost,
+      clearFocusLayerFreezeForPost
+    );
+    const bypassChanged = applyVideoPlaybackMutation(
+      postId,
+      decision.bypass,
+      enableVideoPlaybackBypass,
+      clearVideoPlaybackBypass
+    );
+    if (!freezeChanged && !bypassChanged) {
       return;
     }
 
-    clearFocusLayerFreezeForPost(postId);
-    clearVideoPlaybackBypass(postId);
+    if (decision.syncMode === "now") {
+      focusLayerSync.syncNow();
+      return;
+    }
+
+    focusLayerSync.syncSoon();
   };
 
   document.addEventListener("pointerdown", (event) => {
-    freezeOn(event.target, 8000);
+    handlePlaybackGuardEvent("pointerdown", event.target);
   }, true);
 
   document.addEventListener("click", (event) => {
-    freezeOn(event.target, 8000);
+    handlePlaybackGuardEvent("click", event.target);
   }, true);
 
   document.addEventListener("play", (event) => {
-    freezeOn(event.target, 180_000);
-    const { postId, matched } = isTargetInsideFocusedVideo(event.target);
-    if (matched) {
-      enableVideoPlaybackBypass(postId, 180_000);
-    }
+    handlePlaybackGuardEvent("play", event.target);
   }, true);
 
   document.addEventListener("playing", (event) => {
-    freezeOn(event.target, 180_000);
-    const { postId, matched } = isTargetInsideFocusedVideo(event.target);
-    if (matched) {
-      enableVideoPlaybackBypass(postId, 180_000);
-    }
+    handlePlaybackGuardEvent("playing", event.target);
   }, true);
 
   document.addEventListener("waiting", (event) => {
-    freezeOn(event.target, 90_000);
-    const { postId, matched } = isTargetInsideFocusedVideo(event.target);
-    if (matched) {
-      enableVideoPlaybackBypass(postId, 90_000);
-    }
+    handlePlaybackGuardEvent("waiting", event.target);
   }, true);
 
   document.addEventListener("pause", (event) => {
-    const target = event.target;
-    if (target instanceof HTMLMediaElement && target.ended) {
-      clearOn(target);
-      return;
-    }
-
-    // Keep replay controls stable after pausing.
-    freezeOn(target, 20_000);
+    handlePlaybackGuardEvent("pause", event.target);
   }, true);
 
   document.addEventListener("ended", (event) => {
-    clearOn(event.target);
+    handlePlaybackGuardEvent("ended", event.target);
   }, true);
 }
 
