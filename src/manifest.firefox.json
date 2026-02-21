@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FocusDeck: Intentional Feed",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Keep native feed UI while adding subtle focus sessions and user-initiated actions.",
   "icons": {
     "16": "icons/icon-16.png",

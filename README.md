@@ -158,7 +158,7 @@ npm run release:firefox
 
 - `dist/firefox/manifest.json`
 - `dist/firefox/content.js`
-- `release/focusdeck-firefox-v0.2.0.zip` (if `npm run pack:firefox` is executed)
+- `release/focusdeck-firefox-v0.2.1.zip` (if `npm run pack:firefox` is executed)
 
 ### Source Integrity
 
