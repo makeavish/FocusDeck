@@ -22,7 +22,7 @@ FocusDeck turns your X / Twitter feed into a deliberate, one-post-at-a-time expe
 • During a session, only the focused post is visible. Navigate with J/K or arrow keys.
 • After your post limit (10 / 20 / 30 / custom), the session ends and only previously viewed posts remain accessible. Non-viewed posts are blocked.
 • A total daily post limit (optional) enforces a hard cap, resetting at midnight local time.
-• Actions like Save and Not Interested are triggered only by explicit user gestures and are rate-limited.
+• Actions like Open, Save, and Hide (Not Interested) are triggered only by explicit user gestures. Save and Hide are rate-limited.
 
 **What FocusDeck does NOT do**
 
@@ -39,6 +39,7 @@ Click the extension icon to open Settings directly. Choose theme (System / Light
 
 • J / ↓ — next post
 • K / ↑ — previous post
+• O — open focused post in background tab (fallback: new tab)
 • S — save / bookmark
 • X — not interested
 • Ctrl+Shift+. (Cmd+Shift+. on Mac) — start session from any X page
@@ -72,14 +73,15 @@ The extension does not use a browser-action popup because clicking the toolbar i
 Stores session configuration, theme preference, daily usage counters, and session snapshots locally. No data leaves the browser.
 
 ### `tabs`
-Used for two purposes only:
+Used for three purposes only:
 1. When the user clicks the toolbar icon, FocusDeck queries open tabs to check if the Settings page is already open (to re-focus it rather than opening a duplicate).
 2. The "Close Feed" action in the daily-limit modal removes the current tab via `tabs.remove`.
+3. The `Open` action opens the focused post in an inactive background tab via `tabs.create` (same window when available).
 
 No browsing history, tab URLs, or other tab metadata is collected or stored.
 
 ### Host permissions (`*://*.x.com/*`, `*://*.twitter.com/*`)
-Content scripts run only on X / Twitter pages to apply the focus layer, manage session state, and execute user-initiated Save / Not Interested actions through native UI interaction.
+Content scripts run only on X / Twitter pages to apply the focus layer, manage session state, and support user-initiated feed actions (Open, Save, Hide) using native page context.
 
 ---
 
@@ -119,8 +121,9 @@ Located in `store/screenshots/`:
 | # | File | Shows |
 |---|------|-------|
 | 1 | `1-settings.png` | Settings page — General tab with theme selector and session data controls |
-| 2 | `2-blocked-posts.png` | Post-limit explore mode — viewed post visible, non-viewed posts blocked |
+| 2 | `2-blocked-posts.png` | Focused feed view — one post visible with top-dock controls |
 | 3 | `3-daily-limit.png` | Daily limit modal — usage summary with Close Feed and Settings actions |
+| 4 | `4-session-start.png` | Session-start prompt — choose post target and begin focused session |
 
 All screenshots use demo / placeholder content with no real user data.
 

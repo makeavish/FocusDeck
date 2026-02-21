@@ -1,6 +1,6 @@
 # FocusDeck Architecture (Current)
 
-Last updated: 2026-02-15
+Last updated: 2026-02-21
 
 `/Users/makeavish/FocusDeck/implementation_plan.md` is deprecated. The implementation plan now lives in this document under **Consolidated Implementation Plan**.
 
@@ -30,10 +30,11 @@ On supported feed routes (`x.com` / `twitter.com`):
 - Without an active session, feed posts are locked (`data-focusdeck-locked`) and a session-start prompt is shown.
 - With an active/paused session on feed, only the focused post remains visible (`data-focusdeck-focused`) while non-focused posts are hidden (`data-focusdeck-hidden`).
 - Fresh sessions initialize focus to the first visible feed post; later viewport changes can re-select the nearest visible post.
-- Sidebar and promoted/ad units are hidden on feed routes (`data-focusdeck-hidden-ui`).
+- During active/paused feed sessions, sidebar and promoted/ad units are hidden on feed routes (`data-focusdeck-hidden-ui`).
 - On detail/thread/media routes, session is paused (`pauseReason=details`) and detail/reply scrolling does not increment feed counters.
 - After a posts-limit completion, FocusDeck enters viewed-only explore mode: viewed posts remain accessible and non-viewed posts are blocked/blurred.
-- Action pill remains minimal (`Save`, `Not interested`); details opening is handled by native route interaction.
+- In viewed-only explore mode, auxiliary feed-side UI remains visible while blocked posts stay non-interactive.
+- Action pill remains minimal (`Open`, `Save`, `Hide`).
 
 ## State Machine
 
@@ -56,6 +57,7 @@ Route transitions are detected with:
 - `history.pushState` wrapper
 - `history.replaceState` wrapper
 - `popstate` listener
+- interval fallback watcher (220ms) for route changes that bypass history hooks
 
 Policy:
 
@@ -64,6 +66,7 @@ Policy:
 - Feed -> Non-feed route: pause quietly.
 - No session on feed: keep feed locked until a new session starts.
 - Daily limit modal `Close Feed` action sends a message to service worker to close the active tab.
+- `Open` action sends `focusdeck:open-background-tab`; service worker opens an inactive tab (same window when available).
 
 ## Counting Rules
 
@@ -75,8 +78,8 @@ Policy:
 
 ## Action Safety Model
 
-- `Not interested` and `Save` require explicit user gesture.
-- Actions execute through centralized dispatcher with 1-second minimum interval.
+- `Open`, `Save`, and `Hide` require explicit user gesture.
+- `Save` and `Hide` execute through centralized dispatcher with 1-second minimum interval.
 - No background automation or bulk actions.
 - Fallback assist mode is used when native selectors drift.
 
@@ -91,16 +94,16 @@ This section replaces the standalone `implementation_plan.md`.
 - Keep only one focused post visible during active/paused feed sessions.
 - Require explicit user gestures for native actions.
 - Keep telemetry local-only.
-- Keep action pill minimal (`Save`, `Not interested`), with details opening handled by native route interaction.
+- Keep action pill minimal (`Open`, `Save`, `Hide`).
 
 ### Source Layout
 
 - `src/content/index.ts`: runtime orchestration, route handling, feed lock/focus layer application
 - `src/core/deck-engine.ts`: session state, focus progression, counting, limit checks
 - `src/adapters/x-adapter.ts`: X-specific selectors and native action execution
-- `src/content/overlay/*`: prompt, action pill, completion modal, daily limit modal
+- `src/content/overlay/*`: prompt, top-dock action pill, daily limit modal
 - `src/settings/*`: options UI (theme + total daily limit)
-- `src/background/service-worker.ts`: storage/message API + toolbar -> options routing
+- `src/background/service-worker.ts`: storage/message API + toolbar -> options routing + background-tab open/close actions
 
 ### Build and Compatibility
 

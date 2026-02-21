@@ -13,17 +13,18 @@ FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing in
 - During a session, only the focused post is visible; all other feed items are hidden.
 - Right sidebar modules and promoted/ad feed units are hidden while on feed routes.
 - On fresh session start, focus begins at the first visible feed post; ongoing viewport changes can move focus to the nearest visible post.
-- Floating action pill includes `Save` and `Not interested`.
-- After a posts-limit session ends, only previously viewed posts remain explorable; non-viewed posts are blocked, blurred, and non-clickable.
+- Floating action pill includes `Open`, `Save`, and `Hide`.
+- After a posts-limit session ends, only previously viewed posts remain explorable; non-viewed posts are blocked, blurred, and non-clickable while general feed-side UI remains visible.
 
 ## Screenshots
 
 <p align="center">
-  <img src="store/screenshots/2-blocked-posts.png" alt="Blocked Posts View" width="45%">
-  <img src="store/screenshots/3-daily-limit.png" alt="Daily Limit Reached" width="45%">
+  <img src="store/screenshots/4-session-start.png" alt="Start Session Prompt" width="45%">
+  <img src="store/screenshots/2-blocked-posts.png" alt="Focused Post View" width="45%">
 </p>
 <p align="center">
-  <img src="store/screenshots/1-settings.png" alt="Settings Page" width="80%">
+  <img src="store/screenshots/3-daily-limit.png" alt="Daily Limit Reached" width="45%">
+  <img src="store/screenshots/1-settings.png" alt="Settings Page" width="45%">
 </p>
 
 ## Session and Route Handling
@@ -33,7 +34,7 @@ FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing in
 - Opening post details/thread/media pauses session automatically.
 - Returning to feed resumes automatically and restores focus when possible.
 - Leaving feed routes pauses session quietly.
-- Posts-limit completion switches to viewed-only explore mode on the current feed.
+- Posts-limit completion switches to viewed-only explore mode on the current feed while keeping feed-side UI visible.
 - Daily limit reached shows a dedicated modal with `Close Feed` and `Settings` (`Close Feed` closes the active tab).
 
 ## Settings (Current)
@@ -47,8 +48,8 @@ Available settings:
 
 ## Safety and Policy Guardrails
 
-- `Not interested` and `Save` only run from explicit user gestures.
-- Actions are rate-limited (minimum 1 second between actions).
+- `Open`, `Save`, and `Hide` only run from explicit user gestures.
+- `Save` and `Hide` actions are rate-limited (minimum 1 second between actions).
 - No background automation, no bulk actions.
 - No remote code loading.
 - Core behavior does not require extension-owned network calls.
@@ -92,6 +93,7 @@ npm run build:firefox
 
 - `J` / `ArrowDown`: next focused post
 - `K` / `ArrowUp`: previous focused post
+- `O`: open focused post in background tab (fallback: new tab)
 - `S`: save/bookmark
 - `X`: not interested
 
@@ -103,7 +105,8 @@ npm run build:firefox
 - Right sidebar and promoted/ad units are hidden on feed routes.
 - Post counter increments only for feed progression (not detail/reply scrolling).
 - Opening details pauses session and returning to feed resumes automatically.
-- Posts-limit completion only allows previously viewed posts; blocked posts remain non-clickable.
+- `Open` action pill button and `O` shortcut open the focused post in a background/new tab.
+- Posts-limit completion keeps feed-side UI visible while only previously viewed posts remain explorable; blocked posts remain non-clickable.
 - Daily limit modal shows expected actions and `Close Feed` closes the active tab.
 - Extension icon opens Settings page directly.
 - Chrome and Firefox unpacked builds load successfully.
@@ -155,7 +158,7 @@ npm run release:firefox
 
 - `dist/firefox/manifest.json`
 - `dist/firefox/content.js`
-- `release/focusdeck-firefox-v0.1.0.zip` (if `npm run pack:firefox` is executed)
+- `release/focusdeck-firefox-v0.2.0.zip` (if `npm run pack:firefox` is executed)
 
 ### Source Integrity
 
