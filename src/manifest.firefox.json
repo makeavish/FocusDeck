@@ -46,14 +46,5 @@
   "options_ui": {
     "page": "settings/settings.html",
     "open_in_tab": true
-  },
-  "commands": {
-    "start-session": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+Period",
-        "mac": "Command+Shift+Period"
-      },
-      "description": "Start FocusDeck session"
-    }
   }
 }

@@ -86,13 +86,6 @@ browserApi.runtime.onInstalled.addListener((details) => {
   void updateSessionConfig(DEFAULT_SESSION_CONFIG);
 });
 
-browserApi.commands.onCommand.addListener((command) => {
-  if (command !== "start-session") {
-    return;
-  }
-  void sendToActiveTab({ type: "focusdeck:start-session" });
-});
-
 browserApi.action.onClicked.addListener(() => {
   void openSettingsPage();
 });

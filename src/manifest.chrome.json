@@ -30,14 +30,5 @@
       "48": "icons/icon-48.png"
     }
   },
-  "options_page": "settings/settings.html",
-  "commands": {
-    "start-session": {
-      "suggested_key": {
-        "default": "Ctrl+Shift+Period",
-        "mac": "Command+Shift+Period"
-      },
-      "description": "Start FocusDeck session"
-    }
-  }
+  "options_page": "settings/settings.html"
 }

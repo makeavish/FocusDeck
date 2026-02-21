@@ -42,7 +42,6 @@ Click the extension icon to open Settings directly. Choose theme (System / Light
 • O — open focused post in background tab (fallback: new tab)
 • S — save / bookmark
 • X — not interested
-• Ctrl+Shift+. (Cmd+Shift+. on Mac) — start session from any X page
 
 ---
 
