@@ -694,6 +694,19 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
     clearVideoPlaybackBypass(videoPlaybackBypassPostId);
   }
 
+  const focusedElement = view.focusedHandle?.element ?? null;
+  const hasReplayablePausedVideo = Boolean(
+    focusedId &&
+      focusedElement &&
+      Array.from(focusedElement.querySelectorAll<HTMLVideoElement>("video")).some(
+        (video) => !video.ended && video.paused && (video.currentTime > 0 || video.readyState >= HTMLMediaElement.HAVE_METADATA)
+      )
+  );
+  if (hasReplayablePausedVideo && focusedId) {
+    freezeFocusLayerForPost(focusedId, 20_000);
+    enableVideoPlaybackBypass(focusedId, 20_000);
+  }
+
   const bypassActive = Boolean(focusedId && videoPlaybackBypassPostId === focusedId && Date.now() < videoPlaybackBypassUntil);
   const freezeActive = Boolean(focusedId && focusLayerFreezePostId === focusedId && Date.now() < focusLayerFreezeUntil);
 
@@ -865,12 +878,13 @@ function registerVideoPlaybackStabilityGuard(): void {
 
   document.addEventListener("pause", (event) => {
     const target = event.target;
-    window.setTimeout(() => {
-      if (target instanceof HTMLMediaElement && !target.paused) {
-        return;
-      }
+    if (target instanceof HTMLMediaElement && target.ended) {
       clearOn(target);
-    }, 700);
+      return;
+    }
+
+    // Keep replay controls stable after pausing.
+    freezeOn(target, 20_000);
   }, true);
 
   document.addEventListener("ended", (event) => {
