@@ -26,7 +26,7 @@ import {
   getSessionSnapshot,
   getSiteSettings
 } from "@/shared/storage";
-import type { AdapterAction } from "@/types/adapter";
+import type { AdapterAction, PostHandle } from "@/types/adapter";
 import type { RuntimeMessage, RuntimeResponse, SiteSettings } from "@/types/messages";
 import type { DailyUsage, SessionConfig, SessionSnapshot } from "@/types/session";
 
@@ -326,23 +326,31 @@ function enforcePostLimitExploreMode(): void {
   }
 
   for (const handle of adapter.getFeedItems()) {
-    const progressKey = adapter.getProgressKey ? adapter.getProgressKey(handle) : handle.id;
-    const viewed = isHandleViewedInPostLimit(postLimitViewedProgressKeys, handle.id, progressKey);
-
-    if (viewed) {
-      handle.element.removeAttribute("data-focusdeck-post-limit-blocked");
-      (handle.element as HTMLElement & { inert?: boolean }).inert = false;
-
-      // Keep both key forms for viewed posts so DOM key transitions remain playable.
-      postLimitViewedProgressKeys.add(handle.id);
-      if (progressKey) {
-        postLimitViewedProgressKeys.add(progressKey);
-      }
-    } else {
-      handle.element.setAttribute("data-focusdeck-post-limit-blocked", "true");
-      (handle.element as HTMLElement & { inert?: boolean }).inert = true;
-    }
+    applyPostLimitStateForHandle(handle);
   }
+}
+
+function applyPostLimitStateForHandle(handle: PostHandle): boolean {
+  const progressKey = adapter?.getProgressKey ? adapter.getProgressKey(handle) : handle.id;
+  const viewed = isHandleViewedInPostLimit(postLimitViewedProgressKeys, handle.id, progressKey);
+
+  if (viewed) {
+    handle.element.removeAttribute("data-focusdeck-post-limit-blocked");
+    (handle.element as HTMLElement & { inert?: boolean }).inert = false;
+
+    // Keep both key forms for viewed posts so DOM key transitions remain playable.
+    postLimitViewedProgressKeys.add(handle.id);
+    if (progressKey) {
+      postLimitViewedProgressKeys.add(progressKey);
+    }
+
+    return false;
+  }
+
+  handle.element.setAttribute("data-focusdeck-post-limit-blocked", "true");
+  // Avoid inert so stale virtualization state can self-correct on first interaction.
+  (handle.element as HTMLElement & { inert?: boolean }).inert = false;
+  return true;
 }
 
 function schedulePostLimitEnforcement(): void {
@@ -1323,6 +1331,16 @@ function registerBlockedPostInteractionGuard(): void {
       return false;
     }
 
+    if (!adapter || !isFeedRoute(window.location.href)) {
+      return false;
+    }
+
+    const handles = adapter.getFeedItems();
+    const matchingHandle = handles.find((handle) => handle.element === target || handle.element.contains(target));
+    if (matchingHandle) {
+      return applyPostLimitStateForHandle(matchingHandle);
+    }
+
     return Boolean(target.closest("[data-focusdeck-post-limit-blocked='true']"));
   };
 
@@ -1339,6 +1357,9 @@ function registerBlockedPostInteractionGuard(): void {
   document.addEventListener("auxclick", blockEvent, true);
   document.addEventListener("dblclick", blockEvent, true);
   document.addEventListener("contextmenu", blockEvent, true);
+  document.addEventListener("pointerdown", blockEvent, true);
+  document.addEventListener("mousedown", blockEvent, true);
+  document.addEventListener("touchstart", blockEvent, true);
 }
 
 async function handleRouteChange(): Promise<void> {
