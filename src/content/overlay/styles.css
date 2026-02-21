@@ -69,10 +69,18 @@
   pointer-events: none;
 }
 
-.fd-progress-pill {
+.fd-top-dock {
   position: fixed;
   right: 20px;
   top: 14px;
+  display: grid;
+  justify-items: end;
+  gap: 10px;
+  pointer-events: none;
+}
+
+.fd-progress-pill {
+  position: relative;
   border-radius: 999px;
   border: 1px solid var(--fd-border);
   background: linear-gradient(180deg, var(--fd-surface), var(--fd-surface-strong));
@@ -86,8 +94,7 @@
 }
 
 .fd-action-pill {
-  position: fixed;
-  transform: translateX(-50%);
+  position: relative;
   border-radius: 999px;
   border: 1px solid var(--fd-border);
   background: linear-gradient(180deg, var(--fd-surface), var(--fd-surface-strong));
@@ -392,23 +399,47 @@
 }
 
 @media (max-width: 760px) {
+  .fd-top-dock {
+    left: 0;
+    right: 0;
+    top: calc(env(safe-area-inset-top, 0px) + 8px);
+    justify-items: stretch;
+  }
+
   .fd-progress-pill {
-    right: 10px;
-    top: 10px;
+    justify-self: end;
+    margin-right: 10px;
     font-size: 12px;
     padding: 7px 11px;
   }
 
   .fd-action-pill {
-    width: calc(100vw - 16px);
+    position: fixed;
+    left: 10px;
+    right: 10px;
+    bottom: calc(env(safe-area-inset-bottom, 0px) + 68px);
+    width: auto;
     justify-content: center;
     border-radius: 16px;
-    transform: translateX(-50%);
+    justify-self: stretch;
+    padding: 6px;
+    gap: 4px;
   }
 
   .fd-pill-btn {
-    flex: 1 1 auto;
+    flex: 1 1 0;
     justify-content: center;
+    min-width: 0;
+    padding: 8px 10px;
+    gap: 6px;
+  }
+
+  .fd-pill-label {
+    font-size: 12px;
+  }
+
+  .fd-pill-key {
+    padding: 1px 4px;
   }
 
   .fd-daily-limit {
