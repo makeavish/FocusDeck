@@ -2,9 +2,7 @@ import type { DailyLimitsConfig, DailyUsage, DailyUsageBucket } from "@/types/se
 
 function emptyBucket(): DailyUsageBucket {
   return {
-    postsViewed: 0,
-    activeMs: 0,
-    emergencyMs: 0
+    postsViewed: 0
   };
 }
 
@@ -20,46 +18,32 @@ export function normalizeUsageForDate(usage: DailyUsage | null, dateKey: string)
   return {
     dateKey: usage.dateKey,
     global: {
-      postsViewed: Math.max(0, Math.floor(usage.global.postsViewed)),
-      activeMs: Math.max(0, Math.floor(usage.global.activeMs)),
-      emergencyMs: Math.max(0, Math.floor(usage.global.emergencyMs))
+      postsViewed: Math.max(0, Math.floor(usage.global.postsViewed))
     },
     perSite: Object.fromEntries(
       Object.entries(usage.perSite).map(([siteId, bucket]) => [
         siteId,
         {
-          postsViewed: Math.max(0, Math.floor(bucket.postsViewed)),
-          activeMs: Math.max(0, Math.floor(bucket.activeMs)),
-          emergencyMs: Math.max(0, Math.floor(bucket.emergencyMs))
+          postsViewed: Math.max(0, Math.floor(bucket.postsViewed))
         }
       ])
     )
   };
 }
 
-export function applyUsageDelta(
-  usage: DailyUsage,
-  siteId: string,
-  delta: { postsViewed?: number; activeMs?: number; emergencyMs?: number }
-): DailyUsage {
+export function applyUsageDelta(usage: DailyUsage, siteId: string, delta: { postsViewed?: number }): DailyUsage {
   const postDelta = Math.max(0, Math.floor(delta.postsViewed ?? 0));
-  const activeDelta = Math.max(0, Math.floor(delta.activeMs ?? 0));
-  const emergencyDelta = Math.max(0, Math.floor(delta.emergencyMs ?? 0));
   const site = usage.perSite[siteId] ?? emptyBucket();
 
   return {
     ...usage,
     global: {
-      postsViewed: usage.global.postsViewed + postDelta,
-      activeMs: usage.global.activeMs + activeDelta,
-      emergencyMs: usage.global.emergencyMs + emergencyDelta
+      postsViewed: usage.global.postsViewed + postDelta
     },
     perSite: {
       ...usage.perSite,
       [siteId]: {
-        postsViewed: site.postsViewed + postDelta,
-        activeMs: site.activeMs + activeDelta,
-        emergencyMs: site.emergencyMs + emergencyDelta
+        postsViewed: site.postsViewed + postDelta
       }
     }
   };
@@ -68,14 +52,8 @@ export function applyUsageDelta(
 export function isDailyLimitReached(limits: DailyLimitsConfig, usage: DailyUsage, siteId: string): boolean {
   const siteUsage = usage.perSite[siteId] ?? emptyBucket();
   const siteLimit = limits.perSite[siteId];
-  const globalEffectiveMs = Math.max(0, usage.global.activeMs - usage.global.emergencyMs);
-  const siteEffectiveMs = Math.max(0, siteUsage.activeMs - siteUsage.emergencyMs);
 
   if (limits.global.maxPosts > 0 && usage.global.postsViewed >= limits.global.maxPosts) {
-    return true;
-  }
-
-  if (limits.global.maxMinutes > 0 && globalEffectiveMs >= limits.global.maxMinutes * 60_000) {
     return true;
   }
 
@@ -84,10 +62,6 @@ export function isDailyLimitReached(limits: DailyLimitsConfig, usage: DailyUsage
   }
 
   if (siteLimit.maxPosts > 0 && siteUsage.postsViewed >= siteLimit.maxPosts) {
-    return true;
-  }
-
-  if (siteLimit.maxMinutes > 0 && siteEffectiveMs >= siteLimit.maxMinutes * 60_000) {
     return true;
   }
 

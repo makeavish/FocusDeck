@@ -29,12 +29,10 @@ FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing in
 ## Session and Route Handling
 
 - Session start supports by-post limits (`10 / 20 / 30 / custom`).
-- A legacy by-time mode (`5 / 10 / 15 / custom`) is still available in the start prompt for compatibility.
 - When total daily post limit is enabled, session post limit selection is capped by remaining posts for the day.
 - Opening post details/thread/media pauses session automatically.
 - Returning to feed resumes automatically and restores focus when possible.
 - Leaving feed routes pauses session quietly.
-- Time-limit completion shows a non-blocking completion modal.
 - Posts-limit completion switches to viewed-only explore mode on the current feed.
 - Daily limit reached shows a dedicated modal with `Close Feed` and `Settings` (`Close Feed` closes the active tab).
 
@@ -96,7 +94,6 @@ npm run build:firefox
 - `K` / `ArrowUp`: previous focused post
 - `S`: save/bookmark
 - `X`: not interested
-- `Esc`: temporarily hide FocusDeck overlay controls
 
 ## Manual Test Checklist
 

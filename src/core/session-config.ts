@@ -25,7 +25,7 @@ export function resolveSessionStartConfig(
     dailyLimits.global.maxPosts > 0 ? Math.max(0, dailyLimits.global.maxPosts - dailyUsage.global.postsViewed) : null;
 
   let cappedByDailyLimit = false;
-  if (!resumed && nextConfig.mode === "posts" && remainingPosts !== null && remainingPosts > 0 && nextConfig.postLimit > remainingPosts) {
+  if (!resumed && remainingPosts !== null && remainingPosts > 0 && nextConfig.postLimit > remainingPosts) {
     nextConfig.postLimit = remainingPosts;
     cappedByDailyLimit = true;
   }

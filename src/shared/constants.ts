@@ -18,15 +18,12 @@ export const KEY_BINDINGS = {
   previous: ["k", "K", "ArrowUp"],
   bookmark: ["s", "S"],
   notInterested: ["x", "X"],
-  openPost: ["o", "O"],
-  toggleOverlay: ["Escape"]
+  openPost: ["o", "O"]
 } as const;
 
 export const DEFAULT_SESSION_CONFIG: SessionConfig = {
-  mode: "posts",
   themeMode: "system",
   postLimit: 20,
-  timeLimitMinutes: 10,
   minimalMode: true
 };
 
@@ -37,8 +34,7 @@ export const DEFAULT_SITE_SETTINGS = {
 
 export const DEFAULT_DAILY_LIMITS: DailyLimitsConfig = {
   global: {
-    maxPosts: 0,
-    maxMinutes: 0
+    maxPosts: 100
   },
   perSite: {}
 };

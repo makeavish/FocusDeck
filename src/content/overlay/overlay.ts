@@ -1,6 +1,6 @@
 import type { AdapterAction } from "@/types/adapter";
 import type { DeckViewState } from "@/core/deck-engine";
-import type { SessionConfig, SessionSummary, ThemeMode } from "@/types/session";
+import type { SessionConfig, ThemeMode } from "@/types/session";
 import { OVERLAY_HOST_ID, OVERLAY_Z_INDEX } from "@/shared/constants";
 import overlayStyles from "@/content/overlay/styles.css?inline";
 
@@ -8,17 +8,12 @@ export interface OverlayCallbacks {
   onStartSession: (partial: Partial<SessionConfig>) => void;
   onAction: (action: AdapterAction) => void;
   onOpenPost: () => void;
-  onDismissComplete: () => void;
-  onStartNewSession: () => void;
-  onExtendPosts: () => void;
-  onExtendMinutes: () => void;
   onDismissDailyLimit: () => void;
   onOpenSettings: () => void;
 }
 
 interface PromptState {
   visible: boolean;
-  mode: "posts" | "time";
   preset: string;
   customValue: number;
   postLimitCap: number | null;
@@ -29,13 +24,11 @@ interface OverlayState {
   themeMode: ThemeMode;
   status: string | null;
   prompt: PromptState;
-  completion: SessionSummary | null;
   dailyLimitReached: boolean;
   dailyLimitContext: {
     postsToday: number | null;
     siteLabel: string;
   };
-  focusLayerSuppressed: boolean;
 }
 
 export class OverlayController {
@@ -49,18 +42,15 @@ export class OverlayController {
     status: null,
     prompt: {
       visible: false,
-      mode: "posts",
       preset: "10",
       customValue: 10,
       postLimitCap: null
     },
-    completion: null,
     dailyLimitReached: false,
     dailyLimitContext: {
       postsToday: null,
       siteLabel: "X"
-    },
-    focusLayerSuppressed: false
+    }
   };
 
   constructor(private readonly callbacks: OverlayCallbacks) {}
@@ -132,11 +122,6 @@ export class OverlayController {
     this.render();
   }
 
-  setCompletion(summary: SessionSummary | null): void {
-    this.state.completion = summary;
-    this.render();
-  }
-
   setDailyLimitReached(reached: boolean): void {
     this.state.dailyLimitReached = reached;
     this.render();
@@ -144,11 +129,6 @@ export class OverlayController {
 
   setDailyLimitContext(context: { postsToday: number | null; siteLabel: string }): void {
     this.state.dailyLimitContext = context;
-    this.render();
-  }
-
-  setFocusLayerSuppressed(suppressed: boolean): void {
-    this.state.focusLayerSuppressed = suppressed;
     this.render();
   }
 
@@ -164,11 +144,9 @@ export class OverlayController {
     const stack = document.createElement("div");
     stack.className = "fd-stack";
 
-    if (!this.state.focusLayerSuppressed) {
-      const floating = this.renderFloating();
-      if (floating) {
-        stack.append(floating);
-      }
+    const floating = this.renderFloating();
+    if (floating) {
+      stack.append(floating);
     }
 
     const prompt = this.renderPrompt();
@@ -182,11 +160,6 @@ export class OverlayController {
     }
 
     this.app.append(stack);
-
-    const completion = this.renderCompletionModal();
-    if (completion) {
-      this.app.append(completion);
-    }
 
     const daily = this.renderDailyLimitModal();
     if (daily) {
@@ -222,15 +195,7 @@ export class OverlayController {
       return false;
     }
 
-    if (prev.config.mode !== curr.config.mode) {
-      return false;
-    }
-
     if (prev.config.postLimit !== curr.config.postLimit) {
-      return false;
-    }
-
-    if (prev.config.timeLimitMinutes !== curr.config.timeLimitMinutes) {
       return false;
     }
 
@@ -293,11 +258,7 @@ export class OverlayController {
 
   private renderProgressLabel(view: DeckViewState): string {
     const snapshot = view.snapshot;
-    if (snapshot.config.mode === "posts") {
-      return `${snapshot.stats.viewedCount}/${snapshot.config.postLimit} posts`;
-    }
-
-    return `${snapshot.stats.viewedCount} posts`;
+    return `${snapshot.stats.viewedCount}/${snapshot.config.postLimit} posts`;
   }
 
   private resolveTheme(): "dark" | "light" {
@@ -325,36 +286,21 @@ export class OverlayController {
 
     const title = document.createElement("h3");
     title.className = "fd-surface-title";
-    title.textContent = "Start a session to access posts";
+    title.textContent = "Start your focused session";
 
     const copy = document.createElement("p");
     copy.className = "fd-surface-body";
-    copy.textContent = "FocusDeck keeps feed posts hidden until a session is running.";
-
-    const modeLabel = document.createElement("label");
-    modeLabel.className = "fd-field";
-    modeLabel.textContent = "Limit type";
-
-    const modeSelect = document.createElement("select");
-    const modePosts = document.createElement("option");
-    modePosts.value = "posts";
-    modePosts.textContent = "By posts";
-    const modeTime = document.createElement("option");
-    modeTime.value = "time";
-    modeTime.textContent = "By time";
-    modeSelect.append(modePosts, modeTime);
-    modeSelect.value = this.state.prompt.mode;
-    modeSelect.addEventListener("change", () => {
-      this.state.prompt.mode = modeSelect.value === "time" ? "time" : "posts";
-      this.state.prompt.preset = this.state.prompt.mode === "posts" ? "10" : "5";
-      this.state.prompt.customValue = this.state.prompt.mode === "posts" ? 10 : 5;
-      this.render();
-    });
-    modeLabel.append(modeSelect);
+    copy.textContent =
+      "Choose a post target. FocusDeck will show one post at a time and end this session when you reach the target.";
 
     const valueLabel = document.createElement("label");
     valueLabel.className = "fd-field";
-    valueLabel.textContent = this.state.prompt.mode === "posts" ? "Posts" : "Minutes";
+    valueLabel.textContent = "Session post target";
+
+    const helper = document.createElement("small");
+    helper.className = "fd-field-hint";
+    helper.textContent = "How many posts do you want to intentionally review in this session?";
+    valueLabel.append(helper);
 
     const valueSelect = document.createElement("select");
     const appendOption = (value: string, label = value) => {
@@ -364,25 +310,19 @@ export class OverlayController {
       valueSelect.append(option);
     };
 
-    if (this.state.prompt.mode === "posts") {
-      const presets = this.getPostPresetOptions();
-      for (const preset of presets) {
-        appendOption(String(preset));
-      }
-      appendOption("custom", "Custom");
-
-      if (this.state.prompt.postLimitCap !== null) {
-        const hint = document.createElement("small");
-        hint.className = "fd-field-hint";
-        hint.textContent = `Remaining today: ${this.state.prompt.postLimitCap} posts`;
-        valueLabel.append(hint);
-      }
-    } else {
-      appendOption("5");
-      appendOption("10");
-      appendOption("15");
-      appendOption("custom", "Custom");
+    const presets = this.getPostPresetOptions();
+    for (const preset of presets) {
+      appendOption(String(preset), `${preset} posts`);
     }
+    appendOption("custom", "Custom post target");
+
+    if (this.state.prompt.postLimitCap !== null) {
+      const hint = document.createElement("small");
+      hint.className = "fd-field-hint";
+      hint.textContent = `Remaining today: ${this.state.prompt.postLimitCap} posts`;
+      valueLabel.append(hint);
+    }
+
     valueSelect.value = this.state.prompt.preset;
     valueSelect.addEventListener("change", () => {
       this.state.prompt.preset = valueSelect.value;
@@ -394,7 +334,7 @@ export class OverlayController {
     customInput.type = "number";
     customInput.min = "1";
     customInput.step = "1";
-    if (this.state.prompt.mode === "posts" && this.state.prompt.postLimitCap !== null) {
+    if (this.state.prompt.postLimitCap !== null) {
       customInput.max = String(this.state.prompt.postLimitCap);
     } else {
       customInput.removeAttribute("max");
@@ -403,7 +343,7 @@ export class OverlayController {
     customInput.style.display = this.state.prompt.preset === "custom" ? "block" : "none";
     customInput.addEventListener("change", () => {
       const raw = Math.max(1, Math.floor(Number(customInput.value) || 1));
-      if (this.state.prompt.mode === "posts" && this.state.prompt.postLimitCap !== null) {
+      if (this.state.prompt.postLimitCap !== null) {
         this.state.prompt.customValue = Math.min(this.state.prompt.postLimitCap, raw);
       } else {
         this.state.prompt.customValue = raw;
@@ -418,80 +358,22 @@ export class OverlayController {
     const start = document.createElement("button");
     start.type = "button";
     start.className = "fd-surface-btn primary";
-    start.textContent = "Start session";
+    start.textContent = "Start focused session";
     start.addEventListener("click", () => {
       const raw =
         this.state.prompt.preset === "custom" ? this.state.prompt.customValue : Number(this.state.prompt.preset);
       let value = Math.max(1, Math.floor(raw || 1));
 
-      if (this.state.prompt.mode === "posts" && this.state.prompt.postLimitCap !== null) {
+      if (this.state.prompt.postLimitCap !== null) {
         value = Math.min(this.state.prompt.postLimitCap, value);
       }
 
-      if (this.state.prompt.mode === "posts") {
-        this.callbacks.onStartSession({ mode: "posts", postLimit: value });
-      } else {
-        this.callbacks.onStartSession({ mode: "time", timeLimitMinutes: value });
-      }
+      this.callbacks.onStartSession({ postLimit: value });
     });
 
     actions.append(start);
-    prompt.append(title, copy, modeLabel, valueLabel, actions);
+    prompt.append(title, copy, valueLabel, actions);
     backdrop.append(prompt);
-    return backdrop;
-  }
-
-  private renderCompletionModal(): HTMLElement | null {
-    if (!this.state.completion) {
-      return null;
-    }
-
-    const backdrop = document.createElement("section");
-    backdrop.className = "fd-modal-backdrop";
-
-    const card = document.createElement("article");
-    card.className = "fd-modal fd-surface-card";
-
-    card.append(this.renderSunIcon());
-
-    const title = document.createElement("h3");
-    title.className = "fd-surface-title";
-    title.textContent = "Session complete";
-
-    const body = document.createElement("p");
-    body.className = "fd-surface-body";
-    body.textContent = `You viewed ${this.state.completion.viewedCount} posts in this session.`;
-
-    const actions = document.createElement("div");
-    actions.className = "fd-surface-actions";
-
-    const close = document.createElement("button");
-    close.type = "button";
-    close.className = "fd-surface-btn";
-    close.textContent = "Close";
-    close.addEventListener("click", this.callbacks.onDismissComplete);
-
-    const restart = document.createElement("button");
-    restart.type = "button";
-    restart.className = "fd-surface-btn primary";
-    restart.textContent = "Start new session";
-    restart.addEventListener("click", this.callbacks.onStartNewSession);
-
-    const extendPosts = document.createElement("button");
-    extendPosts.type = "button";
-    extendPosts.className = "fd-surface-btn";
-    extendPosts.textContent = "Extend +5 posts";
-    extendPosts.addEventListener("click", this.callbacks.onExtendPosts);
-
-    const extendMinutes = document.createElement("button");
-    extendMinutes.type = "button";
-    extendMinutes.className = "fd-surface-btn";
-    extendMinutes.textContent = "Extend +2 minutes";
-    extendMinutes.addEventListener("click", this.callbacks.onExtendMinutes);
-
-    actions.append(restart, close, extendPosts, extendMinutes);
-    card.append(title, body, actions);
-    backdrop.append(card);
     return backdrop;
   }
 
@@ -553,7 +435,7 @@ export class OverlayController {
   }
 
   private renderStatus(): HTMLElement | null {
-    if (!this.state.status || this.state.focusLayerSuppressed) {
+    if (!this.state.status) {
       return null;
     }
 
@@ -592,10 +474,6 @@ export class OverlayController {
   }
 
   private normalizePromptPostLimit(): void {
-    if (this.state.prompt.mode !== "posts") {
-      return;
-    }
-
     const cap = this.state.prompt.postLimitCap;
     if (cap === null) {
       return;

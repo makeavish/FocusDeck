@@ -6,7 +6,6 @@ export interface KeyboardHandlers {
   onBookmark: () => void;
   onNotInterested: () => void;
   onOpenPost: () => void;
-  onOverlayToggle: () => void;
 }
 
 function isEditable(target: EventTarget | null): boolean {
@@ -53,12 +52,6 @@ export function installKeyboardShortcuts(handlers: KeyboardHandlers): () => void
     if (KEY_BINDINGS.openPost.includes(key as (typeof KEY_BINDINGS.openPost)[number])) {
       event.preventDefault();
       handlers.onOpenPost();
-      return;
-    }
-
-    if (KEY_BINDINGS.toggleOverlay.includes(key as (typeof KEY_BINDINGS.toggleOverlay)[number])) {
-      event.preventDefault();
-      handlers.onOverlayToggle();
     }
   };
 

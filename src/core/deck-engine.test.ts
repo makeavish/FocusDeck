@@ -172,9 +172,7 @@ function buildDailyUsage(): DailyUsage {
   return {
     dateKey: "2026-02-21",
     global: {
-      postsViewed: 0,
-      activeMs: 0,
-      emergencyMs: 0
+      postsViewed: 0
     },
     perSite: {}
   };
@@ -212,17 +210,14 @@ function buildHandle(id: string, rectState: RectState): PostHandle {
 }
 
 const DEFAULT_CONFIG: SessionConfig = {
-  mode: "posts",
   themeMode: "system",
   postLimit: 20,
-  timeLimitMinutes: 10,
   minimalMode: true
 };
 
 const DEFAULT_DAILY_LIMITS: DailyLimitsConfig = {
   global: {
-    maxPosts: 0,
-    maxMinutes: 0
+    maxPosts: 0
   },
   perSite: {}
 };

@@ -8,10 +8,10 @@ FocusDeck is designed to run locally in your browser.
 
 FocusDeck stores the following in extension local storage (`storage.local`):
 
-- Session config (mode, limits, theme preference)
+- Session config (post limit, theme preference)
 - Session snapshot (for automatic route pause/resume and focus restoration)
-- Daily limits (total daily post limit + internal minute-budget compatibility fields)
-- Daily usage counters (posts viewed and active minutes, plus internal compatibility counters)
+- Daily limits (total daily post limit)
+- Daily usage counters (posts viewed)
 - Site settings used internally for adapter behavior defaults
 
 ## What FocusDeck does not collect

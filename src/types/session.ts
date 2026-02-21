@@ -1,4 +1,3 @@
-export type SessionMode = "posts" | "time";
 export type ThemeMode = "system" | "light" | "dark";
 
 export type SessionPhase = "idle" | "prompting" | "active" | "paused" | "completed";
@@ -6,17 +5,14 @@ export type SessionPhase = "idle" | "prompting" | "active" | "paused" | "complet
 export type PauseReason = "manual" | "details" | "navigation" | "limit" | null;
 
 export interface SessionConfig {
-  mode: SessionMode;
   themeMode: ThemeMode;
   postLimit: number;
-  timeLimitMinutes: number;
   minimalMode: boolean;
 }
 
 export interface SessionStats {
   viewedCount: number;
   viewedPostIds: string[];
-  activeMs: number;
   actions: {
     notInterested: number;
     bookmarked: number;
@@ -36,14 +32,13 @@ export interface SessionSnapshot {
 }
 
 export interface SessionSummary {
-  reason: "posts-limit" | "time-limit" | "manual";
+  reason: "posts-limit" | "manual";
   viewedCount: number;
   durationMs: number;
 }
 
 export interface DailyLimitRule {
   maxPosts: number;
-  maxMinutes: number;
 }
 
 export interface DailyLimitsConfig {
@@ -53,8 +48,6 @@ export interface DailyLimitsConfig {
 
 export interface DailyUsageBucket {
   postsViewed: number;
-  activeMs: number;
-  emergencyMs: number;
 }
 
 export interface DailyUsage {

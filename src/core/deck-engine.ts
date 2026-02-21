@@ -30,7 +30,6 @@ interface EngineCallbacks {
   onDailyLimitReached?: () => void;
   onDailyUsageUpdated?: (usage: DailyUsage) => void;
   canCountProgress?: () => boolean;
-  canCountTime?: () => boolean;
 }
 
 type StateListener = (state: DeckViewState) => void;
@@ -38,7 +37,6 @@ type StateListener = (state: DeckViewState) => void;
 const EMPTY_STATS: SessionStats = {
   viewedCount: 0,
   viewedPostIds: [],
-  activeMs: 0,
   actions: {
     notInterested: 0,
     bookmarked: 0,
@@ -53,10 +51,8 @@ export class DeckEngine {
   private focusedHandle: PostHandle | null = null;
   private readonly listeners = new Set<StateListener>();
   private observerCleanup: (() => void) | null = null;
-  private timerId: number | null = null;
   private scrollRafId = 0;
   private persistTimerId: number | null = null;
-  private lastTickAt = 0;
   private routePauseReason: PauseReason = null;
 
   constructor(
@@ -116,7 +112,6 @@ export class DeckEngine {
       stats: {
         viewedCount: viewedSet.size,
         viewedPostIds: [...viewedSet],
-        activeMs: Math.max(0, Math.floor(stats.activeMs)),
         actions: {
           notInterested: stats.actions.notInterested || 0,
           bookmarked: stats.actions.bookmarked || 0,
@@ -130,10 +125,8 @@ export class DeckEngine {
       viewedIdSet: viewedSet
     };
 
-    this.lastTickAt = Date.now();
     this.attachObserver();
     this.attachWindowTracking();
-    this.startTicker();
 
     if (nextSnapshot.focusedPostId && this.restoreFocus(nextSnapshot.focusedPostId, false)) {
       this.emit();
@@ -195,7 +188,6 @@ export class DeckEngine {
     this.state.snapshot.phase = transitionSessionPhase(this.state.snapshot.phase, { type: "resume" });
     this.state.snapshot.pauseReason = null;
     this.state.snapshot.updatedAt = Date.now();
-    this.lastTickAt = Date.now();
     this.persistSoon();
     this.emit();
   }
@@ -403,42 +395,6 @@ export class DeckEngine {
     }
   }
 
-  extendSession(additionalPosts: number, additionalMinutes: number): void {
-    if (!this.state) {
-      return;
-    }
-
-    const nextPosts = Math.max(1, this.state.snapshot.config.postLimit + Math.max(0, Math.floor(additionalPosts)));
-    const nextMinutes = Math.max(1, this.state.snapshot.config.timeLimitMinutes + Math.max(0, Math.floor(additionalMinutes)));
-    this.state.snapshot.config = {
-      ...this.state.snapshot.config,
-      postLimit: nextPosts,
-      timeLimitMinutes: nextMinutes
-    };
-
-    if (this.state.snapshot.phase === "completed") {
-      this.state.snapshot.phase = "active";
-      this.state.snapshot.pauseReason = null;
-    }
-
-    this.state.snapshot.updatedAt = Date.now();
-    this.lastTickAt = Date.now();
-    this.persistSoon();
-    this.emit();
-  }
-
-  grantEmergencyMinutes(minutes: number): void {
-    if (minutes <= 0) {
-      return;
-    }
-
-    this.dailyUsage = applyUsageDelta(this.dailyUsage, this.adapter.id, {
-      emergencyMs: Math.floor(minutes * 60_000)
-    });
-    this.callbacks.onDailyUsageUpdated?.(this.dailyUsage);
-    this.persistSoon();
-  }
-
   private async executeAction(action: AdapterAction, handle: PostHandle): Promise<ActionResult> {
     if (action === "notInterested") {
       return this.adapter.notInterested(handle);
@@ -483,13 +439,8 @@ export class DeckEngine {
     }
 
     const { config, stats } = this.state.snapshot;
-    if (config.mode === "posts" && config.postLimit > 0 && stats.viewedCount >= config.postLimit) {
+    if (config.postLimit > 0 && stats.viewedCount >= config.postLimit) {
       this.complete("posts-limit");
-      return;
-    }
-
-    if (config.mode === "time" && config.timeLimitMinutes > 0 && stats.activeMs >= config.timeLimitMinutes * 60_000) {
-      this.complete("time-limit");
     }
   }
 
@@ -598,41 +549,6 @@ export class DeckEngine {
         this.scrollRafId = 0;
       }
     };
-  }
-
-  private startTicker(): void {
-    if (this.timerId !== null) {
-      window.clearInterval(this.timerId);
-    }
-
-    this.timerId = window.setInterval(() => {
-      if (!this.state || this.state.snapshot.phase !== "active") {
-        this.lastTickAt = Date.now();
-        return;
-      }
-
-      const now = Date.now();
-      const delta = Math.max(0, now - this.lastTickAt);
-      this.lastTickAt = now;
-
-      if (document.visibilityState !== "visible") {
-        return;
-      }
-
-      if (this.callbacks.canCountTime?.() === false) {
-        return;
-      }
-
-      this.state.snapshot.stats.activeMs += delta;
-      this.state.snapshot.updatedAt = now;
-      this.dailyUsage = applyUsageDelta(this.dailyUsage, this.adapter.id, { activeMs: delta });
-      this.callbacks.onDailyUsageUpdated?.(this.dailyUsage);
-
-      this.checkSessionLimit();
-      this.checkDailyLimits();
-      this.persistSoon();
-      this.emit();
-    }, 1000);
   }
 
   private findHandleById(id: string): PostHandle | null {
@@ -744,11 +660,6 @@ export class DeckEngine {
   private teardown(): void {
     this.observerCleanup?.();
     this.observerCleanup = null;
-
-    if (this.timerId !== null) {
-      window.clearInterval(this.timerId);
-      this.timerId = null;
-    }
 
     if (this.persistTimerId !== null) {
       window.clearTimeout(this.persistTimerId);

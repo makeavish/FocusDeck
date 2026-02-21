@@ -70,7 +70,6 @@ Policy:
 - Post views increment only when focus advances to a new progress key during active feed sessions.
 - Reply/detail thread scrolling does not contribute.
 - Thread progression is deduplicated so one thread counts as one.
-- Active minutes increment only while phase is `active`, route is feed, and tab visibility is `visible`.
 - Total daily post limit is enforced with local-midnight reset.
 - Session post-limit options are capped by remaining total daily posts when the daily cap is enabled.
 

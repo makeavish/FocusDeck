@@ -41,7 +41,6 @@ Click the extension icon to open Settings directly. Choose theme (System / Light
 • K / ↑ — previous post
 • S — save / bookmark
 • X — not interested
-• Esc — toggle overlay controls
 • Ctrl+Shift+. (Cmd+Shift+. on Mac) — start session from any X page
 
 ---
@@ -100,7 +99,7 @@ Content scripts run only on X / Twitter pages to apply the focus layer, manage s
 | Does the extension collect user activity? | No* |
 | Does the extension collect website content? | No |
 
-\* FocusDeck counts posts viewed and active minutes locally to enforce session and daily limits. These counters never leave the browser.
+\* FocusDeck counts posts viewed locally to enforce session and daily limits. These counters never leave the browser.
 
 ### Firefox Data Collection Permissions
 `data_collection_permissions.required: ["none"]`

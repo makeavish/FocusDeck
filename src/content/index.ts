@@ -35,8 +35,6 @@ let engine: DeckEngine | null = null;
 let siteSettings: SiteSettings | null = null;
 let keyboardCleanup: (() => void) | null = null;
 let statusTimerId: number | null = null;
-let overlaySuppressed = false;
-let overlaySuppressionTimerId: number | null = null;
 let resumeRecoveryTimerIds: number[] = [];
 let postLimitExploreMode = false;
 let postLimitViewedProgressKeys = new Set<string>();
@@ -113,29 +111,6 @@ function ensureOverlay(): OverlayController {
     onOpenPost: () => {
       void openFocusedPostInBackground();
     },
-    onDismissComplete: () => {
-      void stopSession();
-    },
-    onStartNewSession: () => {
-      overlay?.setCompletion(null);
-      void startSession();
-    },
-    onExtendPosts: () => {
-      if (!window.confirm("Extend this session by +5 posts?")) {
-        return;
-      }
-      engine?.extendSession(5, 0);
-      overlay?.setCompletion(null);
-      setStatus("Extended by +5 posts.");
-    },
-    onExtendMinutes: () => {
-      if (!window.confirm("Extend this session by +2 minutes?")) {
-        return;
-      }
-      engine?.extendSession(0, 2);
-      overlay?.setCompletion(null);
-      setStatus("Extended by +2 minutes.");
-    },
     onDismissDailyLimit: () => {
       void closeFeedTab();
     },
@@ -176,26 +151,6 @@ function showDailyLimitModal(usage?: DailyUsage | null): void {
     siteLabel: adapter?.name ?? "this site"
   });
   overlayRef.setDailyLimitReached(true);
-}
-
-function setOverlaySuppressed(next: boolean): void {
-  overlaySuppressed = next;
-  overlay?.setFocusLayerSuppressed(next);
-
-  if (overlaySuppressionTimerId !== null) {
-    window.clearTimeout(overlaySuppressionTimerId);
-    overlaySuppressionTimerId = null;
-  }
-
-  if (!next) {
-    return;
-  }
-
-  overlaySuppressionTimerId = window.setTimeout(() => {
-    overlaySuppressed = false;
-    overlaySuppressionTimerId = null;
-    overlay?.setFocusLayerSuppressed(false);
-  }, 3000);
 }
 
 function clearResumeRecoveryTimers(): void {
@@ -982,20 +937,13 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
     engine = null;
   }
 
-  overlayRef.setCompletion(null);
   overlayRef.setDailyLimitReached(false);
   overlayRef.setPromptPostLimitCap(null);
-  setOverlaySuppressed(false);
   setAuxiliaryUiHidden(true);
   setFeedLocked(false);
 
   engine = new DeckEngine(adapter, dispatcher, dailyLimits, dailyUsage, {
     onComplete: (summary) => {
-      if (summary.reason === "time-limit") {
-        overlayRef.setCompletion(summary);
-        return;
-      }
-
       if (summary.reason === "posts-limit") {
         void finishPostLimitSession();
       }
@@ -1004,8 +952,7 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
       showDailyLimitModal(engine?.getDailyUsage() ?? null);
       setStatus("Daily limit reached.");
     },
-    canCountProgress: () => isFeedRoute(window.location.href) && !isDetailRoute(window.location.href),
-    canCountTime: () => isFeedRoute(window.location.href) && !isDetailRoute(window.location.href)
+    canCountProgress: () => isFeedRoute(window.location.href) && !isDetailRoute(window.location.href)
   });
 
   engine.subscribe((view) => {
@@ -1076,9 +1023,6 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
     },
     onOpenPost: () => {
       void openFocusedPostInBackground();
-    },
-    onOverlayToggle: () => {
-      toggleOverlaySuppression();
     }
   });
 
@@ -1106,10 +1050,8 @@ async function finishPostLimitSession(): Promise<void> {
   enablePostLimitExploreMode(viewedProgressKeys);
   clearResumeRecoveryTimers();
   overlay?.setView(null);
-  overlay?.setCompletion(null);
   overlay?.setDailyLimitReached(false);
   overlay?.setPromptVisible(false);
-  setOverlaySuppressed(false);
   setStatus("Post target reached. Session ended.", 2200);
 }
 
@@ -1128,9 +1070,7 @@ async function stopSession(): Promise<void> {
   setFeedLocked(true);
   clearResumeRecoveryTimers();
   overlay?.setView(null);
-  overlay?.setCompletion(null);
   overlay?.setDailyLimitReached(false);
-  setOverlaySuppressed(false);
   await maybeShowPrompt();
 }
 
@@ -1186,17 +1126,6 @@ async function openFocusedPostInBackground(): Promise<void> {
     window.open(permalink, "_blank", "noopener,noreferrer");
     setStatus("Opened post in new tab.", 1800);
   }
-}
-
-function toggleOverlaySuppression(): void {
-  if (overlaySuppressed) {
-    setOverlaySuppressed(false);
-    setStatus("Overlay controls restored.");
-    return;
-  }
-
-  setOverlaySuppressed(true);
-  setStatus("Overlay controls hidden for 3 seconds.");
 }
 
 function isFeedRoute(url: string): boolean {

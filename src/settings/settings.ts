@@ -62,7 +62,7 @@ const clearDailyUsage = mustElement<HTMLButtonElement>("#clearDailyUsage");
 
 const draft: DraftState = {
   themeMode: "system",
-  sharedDailyLimit: 0
+  sharedDailyLimit: 100
 };
 
 let savedDailyLimits: DailyLimitsConfig | null = null;
@@ -135,8 +135,7 @@ function renderDraftToForm(): void {
 function normalizeDailyLimits(limits: DailyLimitsConfig | null | undefined): DailyLimitsConfig {
   return {
     global: {
-      maxPosts: Math.max(0, Math.floor(limits?.global.maxPosts || 0)),
-      maxMinutes: Math.max(0, Math.floor(limits?.global.maxMinutes || 0))
+      maxPosts: Math.max(0, Math.floor(limits?.global.maxPosts || 0))
     },
     perSite: { ...(limits?.perSite ?? {}) }
   };
@@ -146,7 +145,6 @@ function readDailyLimitPayload(baseLimits: DailyLimitsConfig | null | undefined)
   const normalized = normalizeDailyLimits(baseLimits);
   return {
     global: {
-      ...normalized.global,
       maxPosts: draft.sharedDailyLimit
     },
     perSite: { ...normalized.perSite }
@@ -248,7 +246,7 @@ applyChanges.addEventListener("click", () => {
 
 resetDefaults.addEventListener("click", () => {
   draft.themeMode = "system";
-  draft.sharedDailyLimit = 0;
+  draft.sharedDailyLimit = 100;
   renderDraftToForm();
   setDirty(true);
   setStatus("Defaults restored locally. Click Apply changes to save.");
