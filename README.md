@@ -6,6 +6,11 @@
 
 FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing intentional.
 
+## Install FocusDeck
+
+[![Install on Firefox](https://img.shields.io/badge/Install%20on-Firefox-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://addons.mozilla.org/en-US/firefox/addon/focusdeck-intentional-feed/)
+[![Install on Chrome](https://img.shields.io/badge/Install%20on-Chrome-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/focusdeck-intentional-fee/pnfjneofemgjgapbomggpgpkedocpibp?hl=en)
+
 ## Extension Behavior
 
 - Native X post UI is preserved (no custom post cards/decks).
