@@ -16,7 +16,8 @@ FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing in
 - Native X post UI is preserved (no custom post cards/decks).
 - Feed access is session-gated; if no session is active, feed posts are hidden and a start-session popover is shown.
 - During a session, only the focused post is visible; all other feed items are hidden.
-- Right sidebar modules and promoted/ad feed units are hidden while on feed routes.
+- Promoted/ad units are hidden across supported X/Twitter routes (including idle or site-disabled states).
+- Right sidebar modules are hidden while feed focus UI is active on feed routes.
 - On fresh session start, focus begins at the first visible feed post; ongoing viewport changes can move focus to the nearest visible post.
 - Floating action pill includes `Open`, `Save`, and `Hide`.
 - After a posts-limit session ends, only previously viewed posts remain explorable; non-viewed posts are blocked, blurred, and non-clickable while general feed-side UI remains visible.
@@ -41,6 +42,7 @@ FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing in
 - Leaving feed routes pauses session quietly.
 - Posts-limit completion switches to viewed-only explore mode on the current feed while keeping feed-side UI visible.
 - Daily limit reached shows a dedicated modal with `Close Feed` and `Settings` (`Close Feed` closes the active tab).
+- Start-session and daily-limit blocking modals lock page scrolling until dismissed.
 
 ## Settings (Current)
 
@@ -106,8 +108,10 @@ npm run build:firefox
 
 - Feed is locked when no session is active.
 - Start-session popover appears on X feed routes.
+- Promoted/ad units stay hidden across X/Twitter routes, including when no session is running.
 - Only one focused post is visible during active session.
-- Right sidebar and promoted/ad units are hidden on feed routes.
+- Right sidebar modules are hidden on feed routes while feed focus UI is active.
+- Start-session and daily-limit modals block wheel/touch/key scrolling until dismissed.
 - Post counter increments only for feed progression (not detail/reply scrolling).
 - Opening details pauses session and returning to feed resumes automatically.
 - `Open` action pill button and `O` shortcut open the focused post in a background/new tab.
@@ -163,7 +167,7 @@ npm run release:firefox
 
 - `dist/firefox/manifest.json`
 - `dist/firefox/content.js`
-- `release/focusdeck-firefox-v0.2.1.zip` (if `npm run pack:firefox` is executed)
+- `release/focusdeck-firefox-v0.2.2.zip` (if `npm run pack:firefox` is executed)
 
 ### Source Integrity
 

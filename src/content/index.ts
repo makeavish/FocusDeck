@@ -61,6 +61,11 @@ let focusLayerFreezePostId: string | null = null;
 let focusLayerFreezeUntil = 0;
 let videoPlaybackBypassPostId: string | null = null;
 let videoPlaybackBypassUntil = 0;
+let popupScrollLocked = false;
+let popupScrollUnlock: (() => void) | null = null;
+
+const AD_HIDDEN_ATTR = "data-focusdeck-ad-hidden";
+const SCROLL_BLOCK_KEYS = new Set([" ", "Spacebar", "PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"]);
 
 function wait(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -126,6 +131,9 @@ function ensureOverlay(): OverlayController {
     },
     onOpenSettings: () => {
       void openSettingsPage();
+    },
+    onBlockingModalVisibilityChange: (visible) => {
+      setPopupScrollLocked(visible);
     }
   });
 
@@ -217,6 +225,10 @@ function ensureFocusLayerStyle(): void {
     }
 
     [data-focusdeck-hidden-ui='true'] {
+      display: none !important;
+    }
+
+    [${AD_HIDDEN_ATTR}='true'] {
       display: none !important;
     }
 
@@ -427,6 +439,112 @@ function isAdCell(cell: HTMLElement): boolean {
   return Boolean(marker);
 }
 
+function isInputLikeElement(target: EventTarget | null): boolean {
+  if (!(target instanceof HTMLElement)) {
+    return false;
+  }
+
+  if (target.isContentEditable) {
+    return true;
+  }
+
+  const tag = target.tagName;
+  return tag === "INPUT" || tag === "TEXTAREA" || tag === "SELECT";
+}
+
+function setPopupScrollLocked(locked: boolean): void {
+  if (popupScrollLocked === locked) {
+    return;
+  }
+
+  popupScrollLocked = locked;
+
+  if (!locked) {
+    popupScrollUnlock?.();
+    popupScrollUnlock = null;
+    return;
+  }
+
+  const htmlElement = document.documentElement;
+  const bodyElement = document.body;
+
+  const previous = {
+    htmlOverflow: htmlElement.style.overflow,
+    htmlOverscrollBehavior: htmlElement.style.overscrollBehavior,
+    bodyOverflow: bodyElement?.style.overflow ?? "",
+    bodyOverscrollBehavior: bodyElement?.style.overscrollBehavior ?? ""
+  };
+
+  htmlElement.style.overflow = "hidden";
+  htmlElement.style.overscrollBehavior = "none";
+
+  if (bodyElement) {
+    bodyElement.style.overflow = "hidden";
+    bodyElement.style.overscrollBehavior = "none";
+  }
+
+  const blockScrollEvent = (event: Event): void => {
+    event.preventDefault();
+  };
+  const blockScrollKey = (event: KeyboardEvent): void => {
+    if (!SCROLL_BLOCK_KEYS.has(event.key)) {
+      return;
+    }
+
+    if (isInputLikeElement(event.target)) {
+      return;
+    }
+
+    event.preventDefault();
+  };
+
+  document.addEventListener("wheel", blockScrollEvent, { capture: true, passive: false });
+  document.addEventListener("touchmove", blockScrollEvent, { capture: true, passive: false });
+  document.addEventListener("keydown", blockScrollKey, true);
+
+  popupScrollUnlock = () => {
+    document.removeEventListener("wheel", blockScrollEvent, true);
+    document.removeEventListener("touchmove", blockScrollEvent, true);
+    document.removeEventListener("keydown", blockScrollKey, true);
+
+    htmlElement.style.overflow = previous.htmlOverflow;
+    htmlElement.style.overscrollBehavior = previous.htmlOverscrollBehavior;
+
+    if (bodyElement) {
+      bodyElement.style.overflow = previous.bodyOverflow;
+      bodyElement.style.overscrollBehavior = previous.bodyOverscrollBehavior;
+    }
+  };
+}
+
+function setAdUnitsHidden(force = false): void {
+  if (!force && !document.body) {
+    return;
+  }
+
+  document.querySelectorAll<HTMLElement>(`[${AD_HIDDEN_ATTR}='true']`).forEach((node) => {
+    node.removeAttribute(AD_HIDDEN_ATTR);
+  });
+
+  const adContainerSelectors = "[data-testid='cellInnerDiv'], [data-testid='placementTracking']";
+  document.querySelectorAll<HTMLElement>(adContainerSelectors).forEach((cell) => {
+    if (isAdCell(cell)) {
+      cell.setAttribute(AD_HIDDEN_ATTR, "true");
+    }
+  });
+
+  const tweetSelectors = "article[data-testid='tweet'], article[role='article']";
+  document.querySelectorAll<HTMLElement>(tweetSelectors).forEach((article) => {
+    if (!isAdCell(article)) {
+      return;
+    }
+
+    const container =
+      article.closest<HTMLElement>("[data-testid='cellInnerDiv'], [data-testid='placementTracking']") ?? article;
+    container.setAttribute(AD_HIDDEN_ATTR, "true");
+  });
+}
+
 function setAuxiliaryUiHidden(hidden: boolean, force = false): void {
   if (!force && auxiliaryUiHiddenState === hidden) {
     return;
@@ -470,11 +588,10 @@ function setAuxiliaryUiHidden(hidden: boolean, force = false): void {
     const articles = Array.from(cell.querySelectorAll<HTMLElement>("article[data-testid='tweet'], article[role='article']"));
     const hasArticle = articles.length > 0;
     const isKnownPost = articles.some((article) => knownFeedArticles.has(article));
-    const hideAsAd = isAdCell(cell);
     const hideAsNonFeedArticle = hasKnownFeedPosts && hasArticle && !isKnownPost;
     const hideAsPromotedModule = hasKnownFeedPosts && !hasArticle && cell.matches("[data-testid='placementTracking']");
 
-    if (hideAsAd || hideAsNonFeedArticle || hideAsPromotedModule) {
+    if (hideAsNonFeedArticle || hideAsPromotedModule) {
       cell.setAttribute("data-focusdeck-hidden-ui", "true");
     }
   }
@@ -527,6 +644,7 @@ function ensureFeedMutationObserver(): void {
 
     feedMutationRafId = window.requestAnimationFrame(() => {
       feedMutationRafId = 0;
+      setAdUnitsHidden(true);
       setAuxiliaryUiHidden(postLimitExploreMode ? false : isFeedRoute(window.location.href), true);
 
       if (postLimitExploreMode) {
@@ -569,6 +687,8 @@ function scheduleIdleRouteSync(): void {
       if (engine || postLimitExploreMode) {
         return;
       }
+
+      setAdUnitsHidden(true);
 
       if (!isFeedRoute(window.location.href)) {
         overlay?.setPromptVisible(false);
@@ -983,6 +1103,8 @@ async function maybeShowPrompt(): Promise<void> {
     return;
   }
 
+  setAdUnitsHidden(true);
+
   const [config, dailyLimits, dailyUsage] = await Promise.all([getSessionConfig(), getDailyLimits(), getDailyUsage()]);
   applyThemeModeFromConfig(config);
 
@@ -1376,6 +1498,7 @@ async function handleRouteChange(): Promise<void> {
   const nowFeed = isFeedRoute(nextRoute);
   const nowDetail = isDetailRoute(nextRoute);
   lastRoute = nextRoute;
+  setAdUnitsHidden(true);
 
   if (!engine) {
     if (!nowFeed) {
@@ -1551,6 +1674,8 @@ async function bootstrap(): Promise<void> {
 
   ensureOverlay();
   ensureFocusLayerStyle();
+  setPopupScrollLocked(false);
+  setAdUnitsHidden(true);
   ensureFeedMutationObserver();
   registerPostLimitViewportGuard();
   registerBlockedPostInteractionGuard();
@@ -1560,6 +1685,7 @@ async function bootstrap(): Promise<void> {
   registerRouteFallbackWatcher();
   registerMessageHandlers();
   applyThemeModeFromConfig(await getSessionConfig());
+  setAdUnitsHidden(true);
   setAuxiliaryUiHidden(isFeedRoute(window.location.href));
   setFeedLocked(isFeedRoute(window.location.href));
   await maybeResumeSession();

@@ -21,7 +21,9 @@ FocusDeck turns your X / Twitter feed into a deliberate, one-post-at-a-time expe
 • Feed access is gated behind an explicit session start — no surprise changes when you load the page.
 • During a session, only the focused post is visible. Navigate with J/K or arrow keys.
 • After your post limit (10 / 20 / 30 / custom), the session ends and only previously viewed posts remain accessible. Non-viewed posts are blocked.
+• Promoted/ad units are hidden across supported X/Twitter routes, including idle and site-disabled states.
 • A total daily post limit (optional) enforces a hard cap, resetting at midnight local time.
+• Start-session and daily-limit modals lock background scrolling while visible.
 • Actions like Open, Save, and Hide (Not Interested) are triggered only by explicit user gestures. Save and Hide are rate-limited.
 
 **What FocusDeck does NOT do**

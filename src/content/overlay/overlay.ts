@@ -10,6 +10,7 @@ export interface OverlayCallbacks {
   onOpenPost: () => void;
   onDismissDailyLimit: () => void;
   onOpenSettings: () => void;
+  onBlockingModalVisibilityChange: (visible: boolean) => void;
 }
 
 interface PromptState {
@@ -35,6 +36,7 @@ export class OverlayController {
   private host: HTMLDivElement | null = null;
   private shadow: ShadowRoot | null = null;
   private app: HTMLElement | null = null;
+  private blockingModalVisible = false;
 
   private readonly state: OverlayState = {
     view: null,
@@ -84,6 +86,8 @@ export class OverlayController {
   }
 
   unmount(): void {
+    this.setBlockingModalVisibility(false);
+
     if (this.host) {
       this.host.remove();
     }
@@ -165,6 +169,17 @@ export class OverlayController {
     if (daily) {
       this.app.append(daily);
     }
+
+    this.setBlockingModalVisibility(this.state.prompt.visible || this.state.dailyLimitReached);
+  }
+
+  private setBlockingModalVisibility(visible: boolean): void {
+    if (this.blockingModalVisible === visible) {
+      return;
+    }
+
+    this.blockingModalVisible = visible;
+    this.callbacks.onBlockingModalVisibilityChange(visible);
   }
 
   private shouldSkipRenderForViewChange(previous: DeckViewState | null, next: DeckViewState | null): boolean {

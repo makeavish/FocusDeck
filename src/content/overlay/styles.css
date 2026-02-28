@@ -159,6 +159,8 @@
   position: fixed;
   inset: 0;
   background: var(--fd-daily-backdrop);
+  -webkit-backdrop-filter: blur(20px) saturate(0.9);
+  backdrop-filter: blur(20px) saturate(0.9);
   display: grid;
   place-items: center;
   pointer-events: auto;
