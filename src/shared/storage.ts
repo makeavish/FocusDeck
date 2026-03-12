@@ -109,7 +109,15 @@ function normalizeDailyUsage(usage: unknown, dateKey: string): DailyUsage {
 }
 
 function isPauseReason(value: unknown): value is SessionSnapshot["pauseReason"] {
-  return value === null || value === "manual" || value === "details" || value === "navigation" || value === "limit";
+  return (
+    value === null ||
+    value === "manual" ||
+    value === "details" ||
+    value === "navigation" ||
+    value === "limit" ||
+    value === "followingBypass" ||
+    value === "forYouBypass"
+  );
 }
 
 function isSessionPhase(value: unknown): value is SessionSnapshot["phase"] {
@@ -143,7 +151,12 @@ function normalizeSessionSnapshot(snapshot: unknown): SessionSnapshot | null {
     startedAt: toNonNegativeInt(snapshot.startedAt, Date.now()),
     updatedAt: toNonNegativeInt(snapshot.updatedAt, Date.now()),
     focusedPostId: typeof snapshot.focusedPostId === "string" ? snapshot.focusedPostId : null,
-    pauseReason: isPauseReason(snapshot.pauseReason) ? snapshot.pauseReason : null,
+    pauseReason:
+      snapshot.pauseReason === "forYouBypass"
+        ? "followingBypass"
+        : isPauseReason(snapshot.pauseReason)
+          ? snapshot.pauseReason
+          : null,
     stats: {
       viewedCount: viewedPostIds.length,
       viewedPostIds,
@@ -165,7 +178,8 @@ function defaultSiteSettingsFor(siteId: string): SiteSettings {
     return {
       enabled: false,
       suppressPromptDate: "",
-      hideDistractingElements: false
+      hideDistractingElements: false,
+      bypassFollowingFeed: false
     };
   }
 
@@ -177,11 +191,18 @@ function defaultSiteSettingsFor(siteId: string): SiteSettings {
 function normalizeSiteSettings(settings: unknown, siteId: string): SiteSettings {
   const defaults = defaultSiteSettingsFor(siteId);
   const raw = isObject(settings) ? settings : {};
+  const bypassFollowingFeed =
+    isBoolean(raw.bypassFollowingFeed)
+      ? raw.bypassFollowingFeed
+      : isBoolean(raw.bypassForYouFeed)
+        ? raw.bypassForYouFeed
+        : defaults.bypassFollowingFeed;
 
   return {
     enabled: isBoolean(raw.enabled) ? raw.enabled : defaults.enabled,
     suppressPromptDate: typeof raw.suppressPromptDate === "string" ? raw.suppressPromptDate : defaults.suppressPromptDate,
-    hideDistractingElements: isBoolean(raw.hideDistractingElements) ? raw.hideDistractingElements : defaults.hideDistractingElements
+    hideDistractingElements: isBoolean(raw.hideDistractingElements) ? raw.hideDistractingElements : defaults.hideDistractingElements,
+    bypassFollowingFeed
   };
 }
 

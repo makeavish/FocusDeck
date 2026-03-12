@@ -178,6 +178,35 @@ describe("shared/storage migration sanitization", () => {
     expect(mocks.store[STORAGE_KEYS.sessionSnapshot]).toEqual(snapshot);
   });
 
+  it("migrates the legacy For You bypass pause reason in stored session snapshots", async () => {
+    mocks.store[STORAGE_KEYS.sessionSnapshot] = {
+      phase: "paused",
+      adapterId: "x",
+      config: {
+        themeMode: "light",
+        postLimit: 8,
+        minimalMode: true
+      },
+      startedAt: 100,
+      updatedAt: 200,
+      focusedPostId: "x-post-1",
+      pauseReason: "forYouBypass",
+      stats: {
+        viewedCount: 1,
+        viewedPostIds: ["a"],
+        actions: {
+          notInterested: 1,
+          bookmarked: 2,
+          openedDetails: 0
+        }
+      }
+    };
+
+    const snapshot = await getSessionSnapshot();
+
+    expect(snapshot?.pauseReason).toBe("followingBypass");
+  });
+
   it("defaults site settings to distraction hiding off and normalizes stored values", async () => {
     mocks.store[STORAGE_KEYS.siteSettings] = {
       x: {
@@ -192,7 +221,8 @@ describe("shared/storage migration sanitization", () => {
     expect(settings).toEqual({
       enabled: true,
       suppressPromptDate: "2026-03-12",
-      hideDistractingElements: false
+      hideDistractingElements: false,
+      bypassFollowingFeed: false
     });
     expect(mocks.store[STORAGE_KEYS.siteSettings]).toEqual({
       x: settings
@@ -204,7 +234,8 @@ describe("shared/storage migration sanitization", () => {
       x: {
         enabled: true,
         suppressPromptDate: "2026-03-12",
-        hideDistractingElements: false
+        hideDistractingElements: false,
+        bypassFollowingFeed: false
       }
     };
 
@@ -215,7 +246,56 @@ describe("shared/storage migration sanitization", () => {
     expect(updated).toEqual({
       enabled: true,
       suppressPromptDate: "2026-03-12",
-      hideDistractingElements: true
+      hideDistractingElements: true,
+      bypassFollowingFeed: false
+    });
+    expect(mocks.store[STORAGE_KEYS.siteSettings]).toEqual({
+      x: updated
+    });
+  });
+
+  it("migrates the legacy For You bypass setting into the Following bypass", async () => {
+    mocks.store[STORAGE_KEYS.siteSettings] = {
+      x: {
+        enabled: true,
+        suppressPromptDate: "2026-03-12",
+        hideDistractingElements: true,
+        bypassForYouFeed: true
+      }
+    };
+
+    const settings = await getSiteSettings("x");
+
+    expect(settings).toEqual({
+      enabled: true,
+      suppressPromptDate: "2026-03-12",
+      hideDistractingElements: true,
+      bypassFollowingFeed: true
+    });
+    expect(mocks.store[STORAGE_KEYS.siteSettings]).toEqual({
+      x: settings
+    });
+  });
+
+  it("updates the Following bypass without overwriting unrelated fields", async () => {
+    mocks.store[STORAGE_KEYS.siteSettings] = {
+      x: {
+        enabled: true,
+        suppressPromptDate: "2026-03-12",
+        hideDistractingElements: true,
+        bypassFollowingFeed: false
+      }
+    };
+
+    const updated = await updateSiteSettings("x", {
+      bypassFollowingFeed: true
+    });
+
+    expect(updated).toEqual({
+      enabled: true,
+      suppressPromptDate: "2026-03-12",
+      hideDistractingElements: true,
+      bypassFollowingFeed: true
     });
     expect(mocks.store[STORAGE_KEYS.siteSettings]).toEqual({
       x: updated

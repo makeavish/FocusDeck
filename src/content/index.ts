@@ -7,6 +7,12 @@ import { resolveSessionStartConfig } from "@/core/session-config";
 import { installKeyboardShortcuts } from "@/content/keyboard";
 import { OverlayController } from "@/content/overlay/overlay";
 import {
+  isFollowingBypassActive,
+  shouldPauseFollowingBypass,
+  shouldResumeFromFollowingBypass,
+  shouldSuppressFollowingLimitUi
+} from "@/content/following-bypass";
+import {
   expandPostLimitViewedKeys,
   isHandleViewedInPostLimit,
   type PostLimitHandleKey
@@ -37,7 +43,7 @@ const adapter = registry.resolve(window.location.href);
 
 const FOCUS_STYLE_ID = "focusdeck-native-layer-style";
 const FEED_STRUCTURE_MUTATION_SELECTOR =
-  "article[data-testid='tweet'], article[role='article'], [data-testid='cellInnerDiv'], [data-testid='placementTracking'], [data-testid='primaryColumn'], [data-testid='sidebarColumn'], aside[role='complementary'], header[role='banner'], nav[role='navigation'], nav[aria-label]";
+  "article[data-testid='tweet'], article[role='article'], [data-testid='cellInnerDiv'], [data-testid='placementTracking'], [data-testid='primaryColumn'], [role='tab'][aria-selected]";
 const dispatcher = new ActionDispatcher();
 
 let overlay: OverlayController | null = null;
@@ -162,6 +168,11 @@ function setStatus(message: string, timeoutMs = 2400): void {
 }
 
 function showDailyLimitModal(usage?: DailyUsage | null): void {
+  if (shouldSuppressFollowingLimitUi(isFollowingFeedBypassActive())) {
+    overlay?.setDailyLimitReached(false);
+    return;
+  }
+
   const overlayRef = ensureOverlay();
   const usageSource = usage ?? engine?.getDailyUsage() ?? null;
   const siteUsage = usageSource && adapter ? usageSource.perSite[adapter.id] : undefined;
@@ -178,6 +189,86 @@ function clearResumeRecoveryTimers(): void {
     window.clearTimeout(timerId);
   }
   resumeRecoveryTimerIds = [];
+}
+
+function isStoredSnapshotResumable(snapshot: SessionSnapshot | null | undefined): snapshot is SessionSnapshot {
+  if (!snapshot || snapshot.adapterId !== adapter?.id || snapshot.phase !== "paused") {
+    return false;
+  }
+
+  return (
+    snapshot.pauseReason === "followingBypass" ||
+    snapshot.pauseReason === "details" ||
+    snapshot.pauseReason === "navigation"
+  );
+}
+
+async function resumeStoredSession(snapshot?: SessionSnapshot | null): Promise<boolean> {
+  const nextSnapshot = snapshot ?? (await getSessionSnapshot());
+  if (!isStoredSnapshotResumable(nextSnapshot)) {
+    return false;
+  }
+
+  const started = await startSession({}, nextSnapshot);
+  if (started) {
+    setStatus("Resumed session.", 2000);
+  }
+  return started;
+}
+
+async function syncFollowingFeedBypassState(): Promise<boolean> {
+  if (!adapter) {
+    return false;
+  }
+
+  const bypassActive = isFollowingFeedBypassActive();
+  if (bypassActive) {
+    if (engine && shouldPauseFollowingBypass(engine.getPhase())) {
+      await engine.pause("followingBypass");
+    }
+
+    clearSessionKeyboardShortcuts();
+    clearResumeRecoveryTimers();
+    clearFocusLayer();
+    clearPostLimitBlockedMarkers();
+    hideOverlaySessionUi();
+    setAuxiliaryUiHidden(false);
+    setFeedLocked(false);
+    return true;
+  }
+
+  if (engine && isFeedRoute(window.location.href)) {
+    const view = engine.getViewState();
+    if (view?.snapshot.phase === "paused" && view.snapshot.pauseReason === "limit") {
+      overlay?.setView(view);
+      showDailyLimitModal(engine.getDailyUsage());
+    }
+  }
+
+  if (
+    engine &&
+    isFeedRoute(window.location.href) &&
+    shouldResumeFromFollowingBypass(engine.getPhase(), engine.getViewState()?.snapshot.pauseReason ?? null)
+  ) {
+    installSessionKeyboardShortcuts();
+    await engine.resume();
+    const view = engine.getViewState();
+    const restored = engine.restoreFocus(view?.snapshot.focusedPostId ?? null, false);
+    if (!restored) {
+      engine.focusNearestToViewportCenter(true, false);
+    }
+    scheduleResumeFocusRecovery();
+    applyFocusLayer(engine.getViewState());
+    overlay?.setDailyLimitReached(false);
+    setStatus("Resumed session.", 2000);
+    return false;
+  }
+
+  if (postLimitExploreMode) {
+    schedulePostLimitEnforcement();
+  }
+
+  return false;
 }
 
 function scheduleResumeFocusRecovery(): void {
@@ -332,6 +423,10 @@ function clearPostLimitExploreMode(): void {
     window.cancelAnimationFrame(postLimitEnforceRafId);
     postLimitEnforceRafId = 0;
   }
+  clearPostLimitBlockedMarkers();
+}
+
+function clearPostLimitBlockedMarkers(): void {
   document.querySelectorAll<HTMLElement>("[data-focusdeck-post-limit-blocked='true']").forEach((node) => {
     node.removeAttribute("data-focusdeck-post-limit-blocked");
     (node as HTMLElement & { inert?: boolean }).inert = false;
@@ -339,7 +434,7 @@ function clearPostLimitExploreMode(): void {
 }
 
 function enforcePostLimitExploreMode(): void {
-  if (!postLimitExploreMode || !adapter || !isFeedRoute(window.location.href)) {
+  if (!postLimitExploreMode || !adapter || !isFeedRoute(window.location.href) || isFollowingFeedBypassActive()) {
     return;
   }
 
@@ -372,7 +467,7 @@ function applyPostLimitStateForHandle(handle: PostHandle): boolean {
 }
 
 function schedulePostLimitEnforcement(): void {
-  if (!postLimitExploreMode || postLimitEnforceRafId) {
+  if (!postLimitExploreMode || postLimitEnforceRafId || isFollowingFeedBypassActive()) {
     return;
   }
 
@@ -394,6 +489,46 @@ function enablePostLimitExploreMode(viewedProgressKeys: Set<string>): void {
   }));
   postLimitViewedProgressKeys = expandPostLimitViewedKeys(new Set(viewedProgressKeys), currentHandleKeys);
   enforcePostLimitExploreMode();
+}
+
+function clearSessionKeyboardShortcuts(): void {
+  keyboardCleanup?.();
+  keyboardCleanup = null;
+}
+
+function installSessionKeyboardShortcuts(): void {
+  if (keyboardCleanup) {
+    return;
+  }
+
+  keyboardCleanup = installKeyboardShortcuts({
+    onNext: () => {
+      void moveNext();
+    },
+    onPrevious: () => {
+      void movePrevious();
+    },
+    onBookmark: () => {
+      void runAction("bookmark", true);
+    },
+    onNotInterested: () => {
+      void runAction("notInterested", true);
+    },
+    onOpenPost: () => {
+      void openFocusedPostInBackground();
+    }
+  });
+}
+
+function hideOverlaySessionUi(): void {
+  overlay?.setView(null);
+  overlay?.setPromptVisible(false);
+  overlay?.setPromptPostLimitCap(null);
+  overlay?.setDailyLimitReached(false);
+}
+
+function isFollowingFeedBypassActive(): boolean {
+  return isFollowingBypassActive(siteSettings, Boolean(adapter) && isFeedRoute(window.location.href));
 }
 
 function setFeedLocked(locked: boolean, force = false): void {
@@ -605,7 +740,6 @@ function hideRightRailDistractions(): void {
   for (const rail of rails) {
     const searchBranch = findRightRailSearchBranch(rail);
     if (!searchBranch) {
-      rail.setAttribute(DISTRACTION_HIDDEN_ATTR, "true");
       continue;
     }
 
@@ -720,7 +854,7 @@ function ensureFeedMutationObserver(): void {
     return;
   }
 
-  const target = document.body;
+  const target = document.querySelector<HTMLElement>("[data-testid='primaryColumn']") ?? document.querySelector<HTMLElement>("main") ?? document.body;
   if (!target) {
     return;
   }
@@ -735,6 +869,10 @@ function ensureFeedMutationObserver(): void {
 
   const hasFeedStructureMutation = (records: MutationRecord[]): boolean => {
     for (const record of records) {
+      if (record.type === "attributes" && touchesFeedStructure(record.target)) {
+        return true;
+      }
+
       for (const node of record.addedNodes) {
         if (touchesFeedStructure(node)) {
           return true;
@@ -762,36 +900,45 @@ function ensureFeedMutationObserver(): void {
 
     feedMutationRafId = window.requestAnimationFrame(() => {
       feedMutationRafId = 0;
-      setAdUnitsHidden(true);
-      setDistractingUiHidden(shouldHideDistractingElements(), true);
-      setAuxiliaryUiHidden(postLimitExploreMode ? false : isFeedRoute(window.location.href), true);
+      void (async () => {
+        setAdUnitsHidden(true);
+        setDistractingUiHidden(shouldHideDistractingElements(), true);
 
-      if (postLimitExploreMode) {
-        schedulePostLimitEnforcement();
-        return;
-      }
+        if (await syncFollowingFeedBypassState()) {
+          return;
+        }
 
-      if (!engine) {
-        scheduleIdleRouteSync();
-        return;
-      }
+        setAuxiliaryUiHidden(postLimitExploreMode ? false : isFeedRoute(window.location.href), true);
 
-      if (feedLocked) {
-        setFeedLocked(true, true);
-        return;
-      }
+        if (postLimitExploreMode) {
+          schedulePostLimitEnforcement();
+          return;
+        }
 
-      const view = engine.getViewState();
-      if (view?.snapshot.phase === "active" && !view.focusedHandle) {
-        engine.focusNearestToViewportCenter(true, false);
-      }
-      applyFocusLayer(engine.getViewState());
+        if (!engine) {
+          scheduleIdleRouteSync();
+          return;
+        }
+
+        if (feedLocked) {
+          setFeedLocked(true, true);
+          return;
+        }
+
+        const view = engine.getViewState();
+        if (view?.snapshot.phase === "active" && !view.focusedHandle) {
+          engine.focusNearestToViewportCenter(true, false);
+        }
+        applyFocusLayer(engine.getViewState());
+      })();
     });
   });
 
   feedMutationObserver.observe(target, {
     childList: true,
-    subtree: true
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["aria-selected"]
   });
 }
 
@@ -809,6 +956,10 @@ function scheduleIdleRouteSync(): void {
 
       setAdUnitsHidden(true);
       setDistractingUiHidden(shouldHideDistractingElements(), true);
+
+      if (await syncFollowingFeedBypassState()) {
+        return;
+      }
 
       if (!isFeedRoute(window.location.href)) {
         overlay?.setPromptVisible(false);
@@ -944,6 +1095,17 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
     clearFocusLayerFreezeForPost(focusLayerFreezePostId);
     clearVideoPlaybackBypass(videoPlaybackBypassPostId);
     clearFocusLayer();
+    return;
+  }
+
+  if (isFollowingFeedBypassActive()) {
+    lastFocusedVideoHydrationPostId = null;
+    clearFocusLayerFreezeForPost(focusLayerFreezePostId);
+    clearVideoPlaybackBypass(videoPlaybackBypassPostId);
+    clearFocusLayer();
+    clearPostLimitBlockedMarkers();
+    setFeedLocked(false);
+    setAuxiliaryUiHidden(false);
     return;
   }
 
@@ -1224,6 +1386,16 @@ async function maybeShowPrompt(): Promise<void> {
   }
 
   setAdUnitsHidden(true);
+  siteSettings = siteSettings ?? (await getSiteSettings(adapter.id));
+  setDistractingUiHidden(shouldHideDistractingElements(), true);
+
+  if (await syncFollowingFeedBypassState()) {
+    return;
+  }
+
+  if (await resumeStoredSession()) {
+    return;
+  }
 
   const [config, dailyLimits, dailyUsage] = await Promise.all([getSessionConfig(), getDailyLimits(), getDailyUsage()]);
   applyThemeModeFromConfig(config);
@@ -1236,7 +1408,6 @@ async function maybeShowPrompt(): Promise<void> {
     return;
   }
 
-  siteSettings = siteSettings ?? (await getSiteSettings(adapter.id));
   if (!siteSettings.enabled) {
     setFeedLocked(false);
     setAuxiliaryUiHidden(false);
@@ -1282,6 +1453,11 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
 
   if (!siteSettings.enabled) {
     setStatus(`FocusDeck is disabled for ${adapter.name}.`);
+    return false;
+  }
+
+  if (await syncFollowingFeedBypassState()) {
+    setStatus("FocusDeck is bypassed on Following.", 1800);
     return false;
   }
 
@@ -1380,24 +1556,7 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
 
   overlayRef.setPromptVisible(false);
   overlayRef.setPromptPostLimitCap(null);
-
-  keyboardCleanup = installKeyboardShortcuts({
-    onNext: () => {
-      void moveNext();
-    },
-    onPrevious: () => {
-      void movePrevious();
-    },
-    onBookmark: () => {
-      void runAction("bookmark", true);
-    },
-    onNotInterested: () => {
-      void runAction("notInterested", true);
-    },
-    onOpenPost: () => {
-      void openFocusedPostInBackground();
-    }
-  });
+  installSessionKeyboardShortcuts();
 
   return true;
 }
@@ -1409,8 +1568,7 @@ async function finishPostLimitSession(): Promise<void> {
 
   const currentEngine = engine;
   const viewedProgressKeys = new Set(currentEngine.getViewState()?.snapshot.stats.viewedPostIds ?? []);
-  keyboardCleanup?.();
-  keyboardCleanup = null;
+  clearSessionKeyboardShortcuts();
 
   await currentEngine.stop("manual");
   if (engine === currentEngine) {
@@ -1429,8 +1587,7 @@ async function finishPostLimitSession(): Promise<void> {
 }
 
 async function stopSession(): Promise<void> {
-  keyboardCleanup?.();
-  keyboardCleanup = null;
+  clearSessionKeyboardShortcuts();
 
   if (engine) {
     await engine.stop("manual");
@@ -1570,6 +1727,10 @@ function registerBlockedPostInteractionGuard(): void {
       return false;
     }
 
+    if (isFollowingFeedBypassActive()) {
+      return false;
+    }
+
     if (!(target instanceof Element)) {
       return false;
     }
@@ -1621,6 +1782,10 @@ async function handleRouteChange(): Promise<void> {
   lastRoute = nextRoute;
   setAdUnitsHidden(true);
   setDistractingUiHidden(shouldHideDistractingElements(), true);
+
+  if (await syncFollowingFeedBypassState()) {
+    return;
+  }
 
   if (!engine) {
     if (!nowFeed) {
@@ -1764,6 +1929,10 @@ function registerStorageWatchers(): void {
       siteSettings = await getSiteSettings(adapter.id);
       setDistractingUiHidden(shouldHideDistractingElements(), true);
 
+      if (await syncFollowingFeedBypassState()) {
+        return;
+      }
+
       if (engine) {
         return;
       }
@@ -1798,18 +1967,18 @@ async function maybeResumeSession(): Promise<void> {
     return;
   }
 
-  const resumableSnapshot =
-    snapshot.phase === "paused" && (snapshot.pauseReason === "details" || snapshot.pauseReason === "navigation");
-
-  if (!resumableSnapshot) {
+  if (!isStoredSnapshotResumable(snapshot)) {
     await clearSessionSnapshot();
     await maybeShowPrompt();
     return;
   }
 
-  const started = await startSession({}, snapshot);
+  if (await syncFollowingFeedBypassState()) {
+    return;
+  }
+
+  const started = await resumeStoredSession(snapshot);
   if (started) {
-    setStatus("Resumed session.", 2000);
     return;
   }
 
@@ -1837,8 +2006,11 @@ async function bootstrap(): Promise<void> {
   siteSettings = await getSiteSettings(adapter.id);
   setAdUnitsHidden(true);
   setDistractingUiHidden(shouldHideDistractingElements(), true);
-  setAuxiliaryUiHidden(isFeedRoute(window.location.href));
-  setFeedLocked(isFeedRoute(window.location.href));
+  const bypassActive = await syncFollowingFeedBypassState();
+  if (!bypassActive) {
+    setAuxiliaryUiHidden(isFeedRoute(window.location.href));
+    setFeedLocked(isFeedRoute(window.location.href));
+  }
   await maybeResumeSession();
 }
 

@@ -31,12 +31,14 @@ const mocks = vi.hoisted(() => {
     getSiteSettings: vi.fn(async () => ({
       enabled: true,
       suppressPromptDate: "",
-      hideDistractingElements: false
+      hideDistractingElements: false,
+      bypassFollowingFeed: false
     })),
     updateSiteSettings: vi.fn(async (_siteId: string, payload: Record<string, unknown>) => ({
       enabled: true,
       suppressPromptDate: "",
-      hideDistractingElements: Boolean(payload.hideDistractingElements)
+      hideDistractingElements: Boolean(payload.hideDistractingElements),
+      bypassFollowingFeed: Boolean(payload.bypassFollowingFeed)
     }))
   };
 });
@@ -100,7 +102,8 @@ describe("background service worker site settings messaging", () => {
       data: {
         enabled: true,
         suppressPromptDate: "",
-        hideDistractingElements: false
+        hideDistractingElements: false,
+        bypassFollowingFeed: false
       }
     });
   });
@@ -113,18 +116,19 @@ describe("background service worker site settings messaging", () => {
       {
         type: "focusdeck:set-site-settings",
         siteId: "x",
-        payload: { hideDistractingElements: true }
+        payload: { hideDistractingElements: true, bypassFollowingFeed: true }
       },
       {}
     );
 
-    expect(mocks.updateSiteSettings).toHaveBeenCalledWith("x", { hideDistractingElements: true });
+    expect(mocks.updateSiteSettings).toHaveBeenCalledWith("x", { hideDistractingElements: true, bypassFollowingFeed: true });
     expect(response).toEqual({
       ok: true,
       data: {
         enabled: true,
         suppressPromptDate: "",
-        hideDistractingElements: true
+        hideDistractingElements: true,
+        bypassFollowingFeed: true
       }
     });
   });

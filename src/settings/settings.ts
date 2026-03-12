@@ -17,6 +17,7 @@ interface DraftState {
   themeMode: ThemeMode;
   sharedDailyLimit: number;
   hideDistractingElements: boolean;
+  bypassFollowingFeed: boolean;
 }
 
 const THEME_CACHE_KEY = "focusdeck:settings-theme-mode";
@@ -56,6 +57,7 @@ const panelLimits = mustElement<HTMLElement>("#panel-limits");
 const themeInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="themeMode"]'));
 const sharedDailyLimit = mustElement<HTMLInputElement>("#sharedDailyLimit");
 const hideDistractingElements = mustElement<HTMLInputElement>("#hideDistractingElements");
+const bypassFollowingFeed = mustElement<HTMLInputElement>("#bypassFollowingFeed");
 const usageSummary = mustElement<HTMLParagraphElement>("#usageSummary");
 const status = mustElement<HTMLParagraphElement>("#status");
 const applyChanges = mustElement<HTMLButtonElement>("#applyChanges");
@@ -66,7 +68,8 @@ const clearDailyUsage = mustElement<HTMLButtonElement>("#clearDailyUsage");
 const draft: DraftState = {
   themeMode: "system",
   sharedDailyLimit: 100,
-  hideDistractingElements: false
+  hideDistractingElements: false,
+  bypassFollowingFeed: false
 };
 
 let savedDailyLimits: DailyLimitsConfig | null = null;
@@ -131,12 +134,14 @@ function syncDraftFromForm(): void {
   draft.themeMode = readThemeMode();
   draft.sharedDailyLimit = toInt(sharedDailyLimit.value, draft.sharedDailyLimit);
   draft.hideDistractingElements = hideDistractingElements.checked;
+  draft.bypassFollowingFeed = bypassFollowingFeed.checked;
 }
 
 function renderDraftToForm(): void {
   renderThemeMode(draft.themeMode);
   sharedDailyLimit.value = String(draft.sharedDailyLimit);
   hideDistractingElements.checked = draft.hideDistractingElements;
+  bypassFollowingFeed.checked = draft.bypassFollowingFeed;
 }
 
 function normalizeDailyLimits(limits: DailyLimitsConfig | null | undefined): DailyLimitsConfig {
@@ -167,7 +172,8 @@ async function applyAllChanges(): Promise<void> {
   const baseLimits = existingLimitsRes.ok && existingLimitsRes.data ? existingLimitsRes.data : savedDailyLimits;
   const dailyLimitPayload = readDailyLimitPayload(baseLimits);
   const siteSettingsPayload: Partial<SiteSettings> = {
-    hideDistractingElements: draft.hideDistractingElements
+    hideDistractingElements: draft.hideDistractingElements,
+    bypassFollowingFeed: draft.bypassFollowingFeed
   };
   const existingSiteSettings =
     existingSiteSettingsRes.ok && existingSiteSettingsRes.data ? existingSiteSettingsRes.data : savedSiteSettings;
@@ -240,6 +246,7 @@ async function loadData(): Promise<void> {
   if (siteSettingsRes.ok && siteSettingsRes.data) {
     savedSiteSettings = siteSettingsRes.data;
     draft.hideDistractingElements = siteSettingsRes.data.hideDistractingElements;
+    draft.bypassFollowingFeed = siteSettingsRes.data.bypassFollowingFeed;
   }
 
   renderDraftToForm();
@@ -283,6 +290,12 @@ hideDistractingElements.addEventListener("change", () => {
   setStatus("Unsaved changes.");
 });
 
+bypassFollowingFeed.addEventListener("change", () => {
+  draft.bypassFollowingFeed = bypassFollowingFeed.checked;
+  setDirty(true);
+  setStatus("Unsaved changes.");
+});
+
 applyChanges.addEventListener("click", () => {
   void applyAllChanges();
 });
@@ -291,6 +304,7 @@ resetDefaults.addEventListener("click", () => {
   draft.themeMode = "system";
   draft.sharedDailyLimit = 100;
   draft.hideDistractingElements = false;
+  draft.bypassFollowingFeed = false;
   renderDraftToForm();
   setDirty(true);
   setStatus("Defaults restored locally. Click Apply changes to save.");

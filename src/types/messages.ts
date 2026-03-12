@@ -4,6 +4,7 @@ export type SiteSettings = {
   enabled: boolean;
   suppressPromptDate?: string;
   hideDistractingElements: boolean;
+  bypassFollowingFeed: boolean;
 };
 
 export type RuntimeMessage =

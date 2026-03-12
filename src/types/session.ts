@@ -2,7 +2,7 @@ export type ThemeMode = "system" | "light" | "dark";
 
 export type SessionPhase = "idle" | "prompting" | "active" | "paused" | "completed";
 
-export type PauseReason = "manual" | "details" | "navigation" | "limit" | null;
+export type PauseReason = "manual" | "details" | "navigation" | "limit" | "followingBypass" | null;
 
 export interface SessionConfig {
   themeMode: ThemeMode;
