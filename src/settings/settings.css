@@ -337,6 +337,79 @@ body {
   font-weight: 700;
 }
 
+.toggle-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  padding: 16px 18px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--bg-field) 88%, transparent);
+}
+
+.toggle-copy {
+  display: grid;
+  gap: 4px;
+}
+
+.toggle-copy strong {
+  font-size: 1.02rem;
+}
+
+.toggle-copy small {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+  line-height: 1.4;
+}
+
+.toggle-control {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+}
+
+.toggle-control input {
+  position: absolute;
+  inset: 0;
+  opacity: 0;
+  cursor: pointer;
+}
+
+.toggle-track {
+  position: relative;
+  inline-size: 58px;
+  block-size: 34px;
+  border-radius: 999px;
+  border: 1px solid var(--btn-default-border);
+  background: var(--seg-idle-bg);
+  transition: background-color 120ms ease, border-color 120ms ease;
+}
+
+.toggle-track::after {
+  content: "";
+  position: absolute;
+  top: 4px;
+  left: 4px;
+  inline-size: 24px;
+  block-size: 24px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  box-shadow: 0 4px 10px rgba(18, 30, 49, 0.16);
+  transition: transform 120ms ease;
+}
+
+.toggle-control input:checked + .toggle-track {
+  background: color-mix(in srgb, var(--accent) 72%, var(--seg-active-bg));
+  border-color: color-mix(in srgb, var(--accent) 78%, var(--border));
+}
+
+.toggle-control input:checked + .toggle-track::after {
+  transform: translateX(24px);
+}
+
 input,
 button {
   font: inherit;
@@ -460,6 +533,7 @@ button:hover {
   .eyebrow,
   .nav-item,
   .field > span,
+  .toggle-copy small,
   input,
   button,
   .seg-option span,

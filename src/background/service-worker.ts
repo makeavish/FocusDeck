@@ -6,7 +6,9 @@ import {
   getDailyLimits,
   getDailyUsage,
   getSessionConfig,
+  getSiteSettings,
   setDailyLimits,
+  updateSiteSettings,
   updateSessionConfig
 } from "@/shared/storage";
 import type { RuntimeMessage, RuntimeResponse } from "@/types/messages";
@@ -134,6 +136,24 @@ browserApi.runtime.onMessage.addListener((rawMessage: unknown, sender: { tab?: {
       .catch((error: unknown) => ({
         ok: false,
         error: error instanceof Error ? error.message : "Failed to read daily usage."
+      }));
+  }
+
+  if (message.type === "focusdeck:get-site-settings") {
+    return getSiteSettings(message.siteId)
+      .then((settings) => ({ ok: true, data: settings }))
+      .catch((error: unknown) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : "Failed to read site settings."
+      }));
+  }
+
+  if (message.type === "focusdeck:set-site-settings") {
+    return updateSiteSettings(message.siteId, message.payload)
+      .then((settings) => ({ ok: true, data: settings }))
+      .catch((error: unknown) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : "Failed to save site settings."
       }));
   }
 

@@ -1,5 +1,5 @@
 import { browserApi } from "@/shared/browser-polyfill";
-import type { RuntimeMessage, RuntimeResponse } from "@/types/messages";
+import type { RuntimeMessage, RuntimeResponse, SiteSettings } from "@/types/messages";
 import type { DailyLimitsConfig, DailyUsage, SessionConfig, ThemeMode } from "@/types/session";
 
 const PANEL_META: Record<string, { title: string; description: string }> = {
@@ -16,9 +16,11 @@ const PANEL_META: Record<string, { title: string; description: string }> = {
 interface DraftState {
   themeMode: ThemeMode;
   sharedDailyLimit: number;
+  hideDistractingElements: boolean;
 }
 
 const THEME_CACHE_KEY = "focusdeck:settings-theme-mode";
+const SITE_ID = "x";
 
 function mustElement<T extends Element>(selector: string): T {
   const node = document.querySelector<T>(selector);
@@ -53,6 +55,7 @@ const panelGeneral = mustElement<HTMLElement>("#panel-general");
 const panelLimits = mustElement<HTMLElement>("#panel-limits");
 const themeInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="themeMode"]'));
 const sharedDailyLimit = mustElement<HTMLInputElement>("#sharedDailyLimit");
+const hideDistractingElements = mustElement<HTMLInputElement>("#hideDistractingElements");
 const usageSummary = mustElement<HTMLParagraphElement>("#usageSummary");
 const status = mustElement<HTMLParagraphElement>("#status");
 const applyChanges = mustElement<HTMLButtonElement>("#applyChanges");
@@ -62,10 +65,12 @@ const clearDailyUsage = mustElement<HTMLButtonElement>("#clearDailyUsage");
 
 const draft: DraftState = {
   themeMode: "system",
-  sharedDailyLimit: 100
+  sharedDailyLimit: 100,
+  hideDistractingElements: false
 };
 
 let savedDailyLimits: DailyLimitsConfig | null = null;
+let savedSiteSettings: SiteSettings | null = null;
 let dirty = false;
 
 function setStatus(message: string): void {
@@ -125,11 +130,13 @@ function showPanel(tabId: string): void {
 function syncDraftFromForm(): void {
   draft.themeMode = readThemeMode();
   draft.sharedDailyLimit = toInt(sharedDailyLimit.value, draft.sharedDailyLimit);
+  draft.hideDistractingElements = hideDistractingElements.checked;
 }
 
 function renderDraftToForm(): void {
   renderThemeMode(draft.themeMode);
   sharedDailyLimit.value = String(draft.sharedDailyLimit);
+  hideDistractingElements.checked = draft.hideDistractingElements;
 }
 
 function normalizeDailyLimits(limits: DailyLimitsConfig | null | undefined): DailyLimitsConfig {
@@ -153,12 +160,22 @@ function readDailyLimitPayload(baseLimits: DailyLimitsConfig | null | undefined)
 
 async function applyAllChanges(): Promise<void> {
   syncDraftFromForm();
-  const existingLimitsRes = await send<DailyLimitsConfig>({ type: "focusdeck:get-daily-limits" });
-  const baseLimits =
-    existingLimitsRes.ok && existingLimitsRes.data ? existingLimitsRes.data : savedDailyLimits;
+  const [existingLimitsRes, existingSiteSettingsRes] = await Promise.all([
+    send<DailyLimitsConfig>({ type: "focusdeck:get-daily-limits" }),
+    send<SiteSettings>({ type: "focusdeck:get-site-settings", siteId: SITE_ID })
+  ]);
+  const baseLimits = existingLimitsRes.ok && existingLimitsRes.data ? existingLimitsRes.data : savedDailyLimits;
   const dailyLimitPayload = readDailyLimitPayload(baseLimits);
+  const siteSettingsPayload: Partial<SiteSettings> = {
+    hideDistractingElements: draft.hideDistractingElements
+  };
+  const existingSiteSettings =
+    existingSiteSettingsRes.ok && existingSiteSettingsRes.data ? existingSiteSettingsRes.data : savedSiteSettings;
+  if (existingSiteSettings?.enabled === false) {
+    siteSettingsPayload.enabled = false;
+  }
 
-  const [configRes, limitsRes] = await Promise.all([
+  const [configRes, limitsRes, siteSettingsRes] = await Promise.all([
     send<SessionConfig>({
       type: "focusdeck:set-config",
       payload: { themeMode: draft.themeMode }
@@ -166,6 +183,11 @@ async function applyAllChanges(): Promise<void> {
     send<DailyLimitsConfig>({
       type: "focusdeck:set-daily-limits",
       payload: dailyLimitPayload
+    }),
+    send<SiteSettings>({
+      type: "focusdeck:set-site-settings",
+      siteId: SITE_ID,
+      payload: siteSettingsPayload
     })
   ]);
 
@@ -183,16 +205,26 @@ async function applyAllChanges(): Promise<void> {
     savedDailyLimits = normalizeDailyLimits(limitsRes.data);
   }
 
+  if (!siteSettingsRes.ok) {
+    setStatus(siteSettingsRes.error ?? "Failed to save site settings.");
+    return;
+  }
+
+  if (siteSettingsRes.data) {
+    savedSiteSettings = siteSettingsRes.data;
+  }
+
   cacheThemeMode(draft.themeMode);
   setDirty(false);
   setStatus("Changes applied.");
 }
 
 async function loadData(): Promise<void> {
-  const [configRes, limitsRes, usageRes] = await Promise.all([
+  const [configRes, limitsRes, usageRes, siteSettingsRes] = await Promise.all([
     send<SessionConfig>({ type: "focusdeck:get-config" }),
     send<DailyLimitsConfig>({ type: "focusdeck:get-daily-limits" }),
-    send<DailyUsage>({ type: "focusdeck:get-daily-usage" })
+    send<DailyUsage>({ type: "focusdeck:get-daily-usage" }),
+    send<SiteSettings>({ type: "focusdeck:get-site-settings", siteId: SITE_ID })
   ]);
 
   if (configRes.ok && configRes.data) {
@@ -203,6 +235,11 @@ async function loadData(): Promise<void> {
   if (limitsRes.ok && limitsRes.data) {
     savedDailyLimits = normalizeDailyLimits(limitsRes.data);
     draft.sharedDailyLimit = savedDailyLimits.global.maxPosts;
+  }
+
+  if (siteSettingsRes.ok && siteSettingsRes.data) {
+    savedSiteSettings = siteSettingsRes.data;
+    draft.hideDistractingElements = siteSettingsRes.data.hideDistractingElements;
   }
 
   renderDraftToForm();
@@ -240,6 +277,12 @@ sharedDailyLimit.addEventListener("change", () => {
   setStatus("Unsaved changes.");
 });
 
+hideDistractingElements.addEventListener("change", () => {
+  draft.hideDistractingElements = hideDistractingElements.checked;
+  setDirty(true);
+  setStatus("Unsaved changes.");
+});
+
 applyChanges.addEventListener("click", () => {
   void applyAllChanges();
 });
@@ -247,6 +290,7 @@ applyChanges.addEventListener("click", () => {
 resetDefaults.addEventListener("click", () => {
   draft.themeMode = "system";
   draft.sharedDailyLimit = 100;
+  draft.hideDistractingElements = false;
   renderDraftToForm();
   setDirty(true);
   setStatus("Defaults restored locally. Click Apply changes to save.");

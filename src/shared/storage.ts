@@ -54,6 +54,10 @@ function isThemeMode(value: unknown): value is SessionConfig["themeMode"] {
   return value === "system" || value === "light" || value === "dark";
 }
 
+function isBoolean(value: unknown): value is boolean {
+  return typeof value === "boolean";
+}
+
 function normalizeSessionConfig(config: unknown): SessionConfig {
   const raw = isObject(config) ? config : {};
   return {
@@ -160,12 +164,24 @@ function defaultSiteSettingsFor(siteId: string): SiteSettings {
   if (siteId === "linkedin") {
     return {
       enabled: false,
-      suppressPromptDate: ""
+      suppressPromptDate: "",
+      hideDistractingElements: false
     };
   }
 
   return {
     ...DEFAULT_SITE_SETTINGS
+  };
+}
+
+function normalizeSiteSettings(settings: unknown, siteId: string): SiteSettings {
+  const defaults = defaultSiteSettingsFor(siteId);
+  const raw = isObject(settings) ? settings : {};
+
+  return {
+    enabled: isBoolean(raw.enabled) ? raw.enabled : defaults.enabled,
+    suppressPromptDate: typeof raw.suppressPromptDate === "string" ? raw.suppressPromptDate : defaults.suppressPromptDate,
+    hideDistractingElements: isBoolean(raw.hideDistractingElements) ? raw.hideDistractingElements : defaults.hideDistractingElements
   };
 }
 
@@ -223,10 +239,38 @@ export async function clearSessionSnapshot(): Promise<void> {
 
 export async function getSiteSettings(siteId: string): Promise<SiteSettings> {
   const map = (await storageGet(STORAGE_KEYS.siteSettings)) ?? {};
-  return {
-    ...defaultSiteSettingsFor(siteId),
-    ...(map[siteId] ?? {})
-  };
+  const normalized = normalizeSiteSettings(map[siteId], siteId);
+
+  if (!map[siteId] || hasChanged(map[siteId], normalized)) {
+    await storageSet({
+      [STORAGE_KEYS.siteSettings]: {
+        ...map,
+        [siteId]: normalized
+      }
+    });
+  }
+
+  return normalized;
+}
+
+export async function updateSiteSettings(siteId: string, partial: Partial<SiteSettings>): Promise<SiteSettings> {
+  const map = (await storageGet(STORAGE_KEYS.siteSettings)) ?? {};
+  const next = normalizeSiteSettings(
+    {
+      ...normalizeSiteSettings(map[siteId], siteId),
+      ...(partial as Record<string, unknown>)
+    },
+    siteId
+  );
+
+  await storageSet({
+    [STORAGE_KEYS.siteSettings]: {
+      ...map,
+      [siteId]: next
+    }
+  });
+
+  return next;
 }
 
 export async function getDailyLimits(): Promise<DailyLimitsConfig> {

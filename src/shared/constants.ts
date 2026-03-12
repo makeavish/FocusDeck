@@ -29,7 +29,8 @@ export const DEFAULT_SESSION_CONFIG: SessionConfig = {
 
 export const DEFAULT_SITE_SETTINGS = {
   enabled: true,
-  suppressPromptDate: ""
+  suppressPromptDate: "",
+  hideDistractingElements: false
 };
 
 export const DEFAULT_DAILY_LIMITS: DailyLimitsConfig = {

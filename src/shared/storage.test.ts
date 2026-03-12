@@ -5,8 +5,10 @@ import {
   getDailyUsage,
   getSessionConfig,
   getSessionSnapshot,
+  getSiteSettings,
   setDailyLimits,
   setDailyUsage,
+  updateSiteSettings,
   updateSessionConfig
 } from "@/shared/storage";
 
@@ -174,5 +176,49 @@ describe("shared/storage migration sanitization", () => {
     expect(snapshot?.stats.viewedPostIds).toEqual(["a", "b"]);
     expect(snapshot?.stats.viewedCount).toBe(2);
     expect(mocks.store[STORAGE_KEYS.sessionSnapshot]).toEqual(snapshot);
+  });
+
+  it("defaults site settings to distraction hiding off and normalizes stored values", async () => {
+    mocks.store[STORAGE_KEYS.siteSettings] = {
+      x: {
+        enabled: true,
+        suppressPromptDate: "2026-03-12",
+        hideDistractingElements: "yes please"
+      }
+    };
+
+    const settings = await getSiteSettings("x");
+
+    expect(settings).toEqual({
+      enabled: true,
+      suppressPromptDate: "2026-03-12",
+      hideDistractingElements: false
+    });
+    expect(mocks.store[STORAGE_KEYS.siteSettings]).toEqual({
+      x: settings
+    });
+  });
+
+  it("updates site settings without overwriting unrelated fields", async () => {
+    mocks.store[STORAGE_KEYS.siteSettings] = {
+      x: {
+        enabled: true,
+        suppressPromptDate: "2026-03-12",
+        hideDistractingElements: false
+      }
+    };
+
+    const updated = await updateSiteSettings("x", {
+      hideDistractingElements: true
+    });
+
+    expect(updated).toEqual({
+      enabled: true,
+      suppressPromptDate: "2026-03-12",
+      hideDistractingElements: true
+    });
+    expect(mocks.store[STORAGE_KEYS.siteSettings]).toEqual({
+      x: updated
+    });
   });
 });

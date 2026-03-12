@@ -3,6 +3,7 @@ import type { DailyLimitsConfig, SessionConfig } from "@/types/session";
 export type SiteSettings = {
   enabled: boolean;
   suppressPromptDate?: string;
+  hideDistractingElements: boolean;
 };
 
 export type RuntimeMessage =
@@ -13,6 +14,8 @@ export type RuntimeMessage =
   | { type: "focusdeck:get-daily-limits" }
   | { type: "focusdeck:set-daily-limits"; payload: DailyLimitsConfig }
   | { type: "focusdeck:get-daily-usage" }
+  | { type: "focusdeck:get-site-settings"; siteId: string }
+  | { type: "focusdeck:set-site-settings"; siteId: string; payload: Partial<SiteSettings> }
   | { type: "focusdeck:clear-session-snapshot" }
   | { type: "focusdeck:clear-daily-usage" }
   | { type: "focusdeck:open-settings" }

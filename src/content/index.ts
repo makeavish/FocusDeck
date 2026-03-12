@@ -37,7 +37,7 @@ const adapter = registry.resolve(window.location.href);
 
 const FOCUS_STYLE_ID = "focusdeck-native-layer-style";
 const FEED_STRUCTURE_MUTATION_SELECTOR =
-  "article[data-testid='tweet'], article[role='article'], [data-testid='cellInnerDiv'], [data-testid='placementTracking'], [data-testid='primaryColumn']";
+  "article[data-testid='tweet'], article[role='article'], [data-testid='cellInnerDiv'], [data-testid='placementTracking'], [data-testid='primaryColumn'], [data-testid='sidebarColumn'], aside[role='complementary'], header[role='banner'], nav[role='navigation'], nav[aria-label]";
 const dispatcher = new ActionDispatcher();
 
 let overlay: OverlayController | null = null;
@@ -53,6 +53,7 @@ let lastRoute = window.location.href;
 let routeFallbackTimerId: number | null = null;
 let feedLocked = false;
 let auxiliaryUiHiddenState: boolean | null = null;
+let distractingUiHiddenState: boolean | null = null;
 let feedMutationObserver: MutationObserver | null = null;
 let feedMutationRafId = 0;
 let lastFocusedVideoHydrationPostId: string | null = null;
@@ -65,6 +66,7 @@ let popupScrollLocked = false;
 let popupScrollUnlock: (() => void) | null = null;
 
 const AD_HIDDEN_ATTR = "data-focusdeck-ad-hidden";
+const DISTRACTION_HIDDEN_ATTR = "data-focusdeck-distraction-hidden";
 const SCROLL_BLOCK_KEYS = new Set([" ", "Spacebar", "PageUp", "PageDown", "Home", "End", "ArrowUp", "ArrowDown"]);
 
 function wait(ms: number): Promise<void> {
@@ -229,6 +231,10 @@ function ensureFocusLayerStyle(): void {
     }
 
     [${AD_HIDDEN_ATTR}='true'] {
+      display: none !important;
+    }
+
+    [${DISTRACTION_HIDDEN_ATTR}='true'] {
       display: none !important;
     }
 
@@ -545,6 +551,118 @@ function setAdUnitsHidden(force = false): void {
   });
 }
 
+function normalizeUiText(value: string): string {
+  return value.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function shouldHideDistractingElements(): boolean {
+  return Boolean(siteSettings?.hideDistractingElements);
+}
+
+function clearDistractingUiHiddenMarkers(): void {
+  document.querySelectorAll<HTMLElement>(`[${DISTRACTION_HIDDEN_ATTR}='true']`).forEach((node) => {
+    node.removeAttribute(DISTRACTION_HIDDEN_ATTR);
+  });
+}
+
+function findRightRailSearchBranch(rail: HTMLElement): HTMLElement | null {
+  const searchNode =
+    rail.querySelector<HTMLElement>("form[role='search']") ??
+    rail.querySelector<HTMLElement>("[role='search']") ??
+    rail.querySelector<HTMLElement>("[data-testid='SearchBox_Search_Input']") ??
+    rail.querySelector<HTMLElement>("input[aria-label*='Search']") ??
+    rail.querySelector<HTMLElement>("input[placeholder='Search']");
+
+  if (!searchNode) {
+    return null;
+  }
+
+  return searchNode.closest<HTMLElement>("form[role='search'], [role='search']") ?? searchNode.closest<HTMLElement>("div") ?? searchNode;
+}
+
+function hideSiblingBranchesAlongPath(node: HTMLElement, stop: HTMLElement): void {
+  let current: HTMLElement | null = node;
+
+  while (current && current !== stop) {
+    const containerParent: HTMLElement | null = current.parentElement;
+    if (!containerParent) {
+      break;
+    }
+
+    Array.from(containerParent.children).forEach((child) => {
+      if (child instanceof HTMLElement && child !== current) {
+        child.setAttribute(DISTRACTION_HIDDEN_ATTR, "true");
+      }
+    });
+
+    current = containerParent;
+  }
+}
+
+function hideRightRailDistractions(): void {
+  const rails = Array.from(document.querySelectorAll<HTMLElement>("[data-testid='sidebarColumn'], aside[role='complementary']"));
+
+  for (const rail of rails) {
+    const searchBranch = findRightRailSearchBranch(rail);
+    if (!searchBranch) {
+      rail.setAttribute(DISTRACTION_HIDDEN_ATTR, "true");
+      continue;
+    }
+
+    hideSiblingBranchesAlongPath(searchBranch, rail);
+  }
+}
+
+function isDistractingLeftNavLink(link: HTMLAnchorElement): boolean {
+  if (!link.closest("header[role='banner'], nav[role='navigation'], nav[aria-label]")) {
+    return false;
+  }
+
+  const href = (link.getAttribute("href") ?? "").toLowerCase();
+  const text = normalizeUiText(link.textContent ?? "");
+  const aria = normalizeUiText(link.getAttribute("aria-label") ?? "");
+
+  if (href === "/explore" || href.startsWith("/explore?")) {
+    return true;
+  }
+
+  if (href.includes("/connect_people")) {
+    return true;
+  }
+
+  if (href === "/premium" || href.startsWith("/premium?") || href.includes("premium_sign_up")) {
+    return true;
+  }
+
+  return text === "explore" || aria === "explore" || text === "follow" || aria === "follow" || text === "premium" || aria === "premium";
+}
+
+function hideLeftNavDistractions(): void {
+  document.querySelectorAll<HTMLAnchorElement>("a[href]").forEach((link) => {
+    if (!isDistractingLeftNavLink(link)) {
+      return;
+    }
+
+    link.setAttribute(DISTRACTION_HIDDEN_ATTR, "true");
+  });
+}
+
+function setDistractingUiHidden(hidden: boolean, force = false): void {
+  if (!force && distractingUiHiddenState === hidden) {
+    return;
+  }
+
+  distractingUiHiddenState = hidden;
+  clearDistractingUiHiddenMarkers();
+
+  if (!hidden) {
+    return;
+  }
+
+  hideRightRailDistractions();
+  hideLeftNavDistractions();
+}
+
 function setAuxiliaryUiHidden(hidden: boolean, force = false): void {
   if (!force && auxiliaryUiHiddenState === hidden) {
     return;
@@ -602,7 +720,7 @@ function ensureFeedMutationObserver(): void {
     return;
   }
 
-  const target = document.querySelector("main") ?? document.body;
+  const target = document.body;
   if (!target) {
     return;
   }
@@ -645,6 +763,7 @@ function ensureFeedMutationObserver(): void {
     feedMutationRafId = window.requestAnimationFrame(() => {
       feedMutationRafId = 0;
       setAdUnitsHidden(true);
+      setDistractingUiHidden(shouldHideDistractingElements(), true);
       setAuxiliaryUiHidden(postLimitExploreMode ? false : isFeedRoute(window.location.href), true);
 
       if (postLimitExploreMode) {
@@ -689,6 +808,7 @@ function scheduleIdleRouteSync(): void {
       }
 
       setAdUnitsHidden(true);
+      setDistractingUiHidden(shouldHideDistractingElements(), true);
 
       if (!isFeedRoute(window.location.href)) {
         overlay?.setPromptVisible(false);
@@ -1500,6 +1620,7 @@ async function handleRouteChange(): Promise<void> {
   const nowDetail = isDetailRoute(nextRoute);
   lastRoute = nextRoute;
   setAdUnitsHidden(true);
+  setDistractingUiHidden(shouldHideDistractingElements(), true);
 
   if (!engine) {
     if (!nowFeed) {
@@ -1623,19 +1744,46 @@ function registerMessageHandlers(): void {
   });
 }
 
-function registerConfigThemeWatcher(): void {
+function registerStorageWatchers(): void {
   browserApi.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") {
       return;
     }
 
-    const change = changes[STORAGE_KEYS.sessionConfig];
-    if (!change) {
+    const sessionConfigChange = changes[STORAGE_KEYS.sessionConfig];
+    if (sessionConfigChange) {
+      const next = sessionConfigChange.newValue as SessionConfig | undefined;
+      applyThemeModeFromConfig(next ?? null);
+    }
+
+    if (!adapter || !changes[STORAGE_KEYS.siteSettings]) {
       return;
     }
 
-    const next = change.newValue as SessionConfig | undefined;
-    applyThemeModeFromConfig(next ?? null);
+    void (async () => {
+      siteSettings = await getSiteSettings(adapter.id);
+      setDistractingUiHidden(shouldHideDistractingElements(), true);
+
+      if (engine) {
+        return;
+      }
+
+      if (!isFeedRoute(window.location.href)) {
+        overlay?.setPromptVisible(false);
+        setAuxiliaryUiHidden(false);
+        setFeedLocked(false);
+        return;
+      }
+
+      if (!siteSettings.enabled) {
+        overlay?.setPromptVisible(false);
+        setAuxiliaryUiHidden(false);
+        setFeedLocked(false);
+        return;
+      }
+
+      await maybeShowPrompt();
+    })();
   });
 }
 
@@ -1681,12 +1829,14 @@ async function bootstrap(): Promise<void> {
   registerPostLimitViewportGuard();
   registerBlockedPostInteractionGuard();
   registerVideoPlaybackStabilityGuard();
-  registerConfigThemeWatcher();
+  registerStorageWatchers();
   wrapHistoryRouting();
   registerRouteFallbackWatcher();
   registerMessageHandlers();
   applyThemeModeFromConfig(await getSessionConfig());
+  siteSettings = await getSiteSettings(adapter.id);
   setAdUnitsHidden(true);
+  setDistractingUiHidden(shouldHideDistractingElements(), true);
   setAuxiliaryUiHidden(isFeedRoute(window.location.href));
   setFeedLocked(isFeedRoute(window.location.href));
   await maybeResumeSession();
