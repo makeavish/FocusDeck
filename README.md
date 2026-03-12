@@ -16,11 +16,20 @@ FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing in
 - Native X post UI is preserved (no custom post cards/decks).
 - Feed access is session-gated; if no session is active, feed posts are hidden and a start-session popover is shown.
 - During a session, only the focused post is visible; all other feed items are hidden.
+- Optional Following-tab bypass lets FocusDeck step aside on X's `Following` timeline without affecting `For you`.
 - Promoted/ad units are hidden across supported X/Twitter routes (including idle or site-disabled states).
 - Right sidebar modules are hidden while feed focus UI is active on feed routes.
 - On fresh session start, focus begins at the first visible feed post; ongoing viewport changes can move focus to the nearest visible post.
 - Floating action pill includes `Open`, `Save`, and `Hide`.
 - After a posts-limit session ends, only previously viewed posts remain explorable; non-viewed posts are blocked, blurred, and non-clickable while general feed-side UI remains visible.
+
+## What's New in 0.3.0
+
+- Improved X permalink resolution so the `Open` action lands on the intended post more reliably.
+- Added an optional distraction filter for X/Twitter chrome, including left-nav `Explore`, `Follow`, `Premium`, and most of the right rail while preserving Search.
+- Added a `Bypass FocusDeck on Following` setting so X's `Following` tab can scroll normally while `For you` remains session-gated.
+- Preserved paused-session state correctly when moving between `Following`, detail routes, and the managed feed.
+- Improved tab-change detection for X's home timeline so bypass state updates more reliably.
 
 ## Screenshots
 
@@ -50,7 +59,9 @@ Clicking the extension icon opens Settings directly (no popup).
 
 Available settings:
 - Theme: `System`, `Light mode`, `Dark mode`
+- Distraction Filter: `Hide distracting elements`
 - Total daily post limit (global, local-only, resets at local browser midnight)
+- Following Feed: `Bypass FocusDeck on Following`
 - Session maintenance actions: clear unfinished session, reset today's usage
 
 ## Safety and Policy Guardrails
@@ -108,6 +119,9 @@ npm run build:firefox
 
 - Feed is locked when no session is active.
 - Start-session popover appears on X feed routes.
+- Enabling `Hide distracting elements` removes non-essential X/Twitter chrome while keeping Search accessible.
+- Enabling `Bypass FocusDeck on Following` lets the `Following` tab scroll freely without consuming session or daily-limit progress.
+- Switching back from `Following` to `For you` restores paused sessions and daily-limit UI correctly.
 - Promoted/ad units stay hidden across X/Twitter routes, including when no session is running.
 - Only one focused post is visible during active session.
 - Right sidebar modules are hidden on feed routes while feed focus UI is active.
@@ -131,6 +145,11 @@ npm run build:firefox
 - `npm run test`
 - `npm run build`
 - `npm run release && npm run pack` (writes versioned ZIPs to `release/`)
+
+Release scope since `v0.2.2` (`2026-02-28`):
+- `cef7681` Fix X article post permalink resolution
+- `77d7c39` Add X distraction hiding setting
+- `b716219` Add Following feed bypass support
 
 ## Firefox Reviewer Build Instructions
 
@@ -167,7 +186,7 @@ npm run release:firefox
 
 - `dist/firefox/manifest.json`
 - `dist/firefox/content.js`
-- `release/focusdeck-firefox-v0.2.2.zip` (if `npm run pack:firefox` is executed)
+- `release/focusdeck-firefox-v0.3.0.zip` (if `npm run pack:firefox` is executed)
 
 ### Source Integrity
 

@@ -20,6 +20,9 @@ FocusDeck turns your X / Twitter feed into a deliberate, one-post-at-a-time expe
 
 • Feed access is gated behind an explicit session start — no surprise changes when you load the page.
 • During a session, only the focused post is visible. Navigate with J/K or arrow keys.
+• The `Open` action resolves X article permalinks more reliably, including trickier post layouts.
+• Optional distraction filtering hides non-essential X/Twitter chrome while keeping Search accessible.
+• Optional Following-tab bypass lets X's `Following` timeline remain fully native while `For you` stays session-gated.
 • After your post limit (10 / 20 / 30 / custom), the session ends and only previously viewed posts remain accessible. Non-viewed posts are blocked.
 • Promoted/ad units are hidden across supported X/Twitter routes, including idle and site-disabled states.
 • A total daily post limit (optional) enforces a hard cap, resetting at midnight local time.
@@ -35,7 +38,7 @@ FocusDeck turns your X / Twitter feed into a deliberate, one-post-at-a-time expe
 
 **Settings**
 
-Click the extension icon to open Settings directly. Choose theme (System / Light / Dark), manage session data, and configure the total daily post limit.
+Click the extension icon to open Settings directly. Choose theme (System / Light / Dark), enable optional distraction filtering, configure the total daily post limit, decide whether FocusDeck should bypass X's `Following` tab, and manage session data.
 
 **Keyboard shortcuts**
 

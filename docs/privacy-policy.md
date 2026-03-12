@@ -1,6 +1,6 @@
 # FocusDeck Privacy Policy
 
-Last updated: 2026-02-21
+Last updated: 2026-03-12
 
 FocusDeck is designed to run locally in your browser.
 
@@ -12,7 +12,7 @@ FocusDeck stores the following in extension local storage (`storage.local`):
 - Session snapshot (for automatic route pause/resume and focus restoration)
 - Daily limits (total daily post limit)
 - Daily usage counters (posts viewed)
-- Site settings used internally for adapter behavior defaults
+- Site settings used internally for adapter behavior defaults (for example distraction hiding and Following-tab bypass preference)
 
 ## What FocusDeck does not collect
 

@@ -1,6 +1,6 @@
 # FocusDeck Architecture (Current)
 
-Last updated: 2026-02-28
+Last updated: 2026-03-12
 
 `/Users/makeavish/FocusDeck/implementation_plan.md` is deprecated. The implementation plan now lives in this document under **Consolidated Implementation Plan**.
 
@@ -29,8 +29,10 @@ On supported routes (`x.com` / `twitter.com`):
 
 - Without an active session, feed posts are locked (`data-focusdeck-locked`) and a session-start prompt is shown.
 - With an active/paused session on feed, only the focused post remains visible (`data-focusdeck-focused`) while non-focused posts are hidden (`data-focusdeck-hidden`).
+- If the site setting `bypassFollowingFeed` is enabled and X's selected home tab is `Following`, FocusDeck steps aside: feed locking, post-limit blocking, and daily-limit UI are suppressed until the user returns to a managed feed tab.
 - Fresh sessions initialize focus to the first visible feed post; later viewport changes can re-select the nearest visible post.
 - Promoted/ad units are hidden across supported X/Twitter routes (`data-focusdeck-ad-hidden`), including idle and site-disabled states.
+- If `hideDistractingElements` is enabled, FocusDeck hides non-essential X/Twitter chrome across supported routes while preserving the right-rail Search entry point.
 - During active/paused feed sessions, sidebar modules are hidden on feed routes (`data-focusdeck-hidden-ui`).
 - On detail/thread/media routes, session is paused (`pauseReason=details`) and detail/reply scrolling does not increment feed counters.
 - After a posts-limit completion, FocusDeck enters viewed-only explore mode: viewed posts remain accessible and non-viewed posts are blocked/blurred.
@@ -63,6 +65,8 @@ Route transitions are detected with:
 Policy:
 
 - Feed -> Detail: pause session and suspend counters.
+- Feed (`For you`) -> Feed (`Following` with bypass enabled): pause active session as `followingBypass` and remove blocking UI.
+- Feed (`Following` with bypass enabled) -> Feed (`For you`): restore the paused session or re-show the daily-limit modal, depending on prior state.
 - Detail -> Feed: resume automatically and restore last focused post when possible.
 - Feed -> Non-feed route: pause quietly.
 - No session on feed: keep feed locked until a new session starts.
@@ -104,7 +108,8 @@ This section replaces the standalone `implementation_plan.md`.
 - `src/core/deck-engine.ts`: session state, focus progression, counting, limit checks
 - `src/adapters/x-adapter.ts`: X-specific selectors and native action execution
 - `src/content/overlay/*`: prompt, top-dock action pill, daily limit modal
-- `src/settings/*`: options UI (theme + total daily limit)
+- `src/settings/*`: options UI (theme, distraction filter, total daily limit, Following bypass)
+- `src/content/following-bypass.ts`: Following-tab detection and bypass policy helpers
 - `src/background/service-worker.ts`: storage/message API + toolbar -> options routing + background-tab open/close actions
 
 ### Build and Compatibility
