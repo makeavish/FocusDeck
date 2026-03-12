@@ -21,6 +21,95 @@ function parseUrl(url: string): URL | null {
   }
 }
 
+function isInternalXHostname(hostname: string): boolean {
+  return /(^|\.)x\.com$/i.test(hostname) || /(^|\.)twitter\.com$/i.test(hostname);
+}
+
+export function normalizeXStatusPermalink(url?: string): string | undefined {
+  if (!url) {
+    return undefined;
+  }
+
+  const parsed = parseUrl(url);
+  if (!parsed || !isInternalXHostname(parsed.hostname)) {
+    return undefined;
+  }
+
+  const match = parsed.pathname.match(/^\/((?:[^/]+)|i)\/status\/(\d+)(?:\/.*)?$/i);
+  if (!match) {
+    return undefined;
+  }
+
+  parsed.pathname = `/${match[1]}/status/${match[2]}`;
+  parsed.search = "";
+  parsed.hash = "";
+  return parsed.toString();
+}
+
+export interface XPermalinkCandidate {
+  url: string;
+  hasTime?: boolean;
+  inUserNameBlock?: boolean;
+}
+
+function scoreXPermalinkCandidate(candidate: XPermalinkCandidate): number {
+  const parsed = parseUrl(candidate.url);
+  if (!parsed || !isInternalXHostname(parsed.hostname)) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  const pathname = parsed.pathname;
+  const normalized = normalizeXStatusPermalink(candidate.url);
+  if (pathname.startsWith("/hashtag/") || pathname.startsWith("/search")) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  if (pathname.startsWith("/i/") && !pathname.includes("/status/")) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  if (!normalized && !candidate.hasTime) {
+    return Number.NEGATIVE_INFINITY;
+  }
+
+  let score = 0;
+  if (normalized) {
+    score += 100;
+  }
+
+  if (candidate.hasTime) {
+    score += 40;
+  }
+
+  if (candidate.inUserNameBlock) {
+    score += 20;
+  }
+
+  if (pathname.includes("/photo/") || pathname.includes("/video/")) {
+    score -= 5;
+  }
+
+  return score;
+}
+
+export function resolveBestXPermalink(candidates: XPermalinkCandidate[]): string | undefined {
+  let best: { score: number; url: string } | null = null;
+
+  for (const candidate of candidates) {
+    const score = scoreXPermalinkCandidate(candidate);
+    if (!Number.isFinite(score)) {
+      continue;
+    }
+
+    const normalized = normalizeXStatusPermalink(candidate.url) ?? candidate.url;
+    if (!best || score > best.score) {
+      best = { score, url: normalized };
+    }
+  }
+
+  return best?.url;
+}
+
 function normalizeImageUrl(url: string): string {
   const parsed = parseUrl(url);
   if (!parsed) {
@@ -96,6 +185,27 @@ function getStatusLink(scope: ParentNode, tweetRoot?: HTMLElement, preferPrimary
   }
 
   return timeLink ?? links[0] ?? null;
+}
+
+function collectPermalinkLinkCandidates(scope: ParentNode, tweetRoot?: HTMLElement, preferPrimary = false): HTMLAnchorElement[] {
+  const links = getScopedElements<HTMLAnchorElement>(scope, "a[href]", tweetRoot);
+  const preferredLinks =
+    preferPrimary && tweetRoot
+      ? links.filter((link) => !isInsideSecondary(tweetRoot, link))
+      : links;
+  const timeLinks = preferredLinks.filter((link) => Boolean(link.querySelector("time")));
+
+  return Array.from(new Set([...timeLinks, ...preferredLinks, ...links]));
+}
+
+function resolvePermalinkFromScope(scope: ParentNode, tweetRoot?: HTMLElement, preferPrimary = false): string | undefined {
+  const candidates = collectPermalinkLinkCandidates(scope, tweetRoot, preferPrimary).map((link) => ({
+    url: link.href,
+    hasTime: Boolean(link.querySelector("time")),
+    inUserNameBlock: Boolean(link.closest("div[data-testid='User-Name']"))
+  }));
+
+  return resolveBestXPermalink(candidates);
 }
 
 function parseHandleFromPath(pathname: string): string | undefined {
@@ -552,7 +662,7 @@ function extractAuthorAndHandle(scope: ParentNode, tweetRoot: HTMLElement | unde
 
 function parseTweet(scope: ParentNode, tweetRoot?: HTMLElement): ParsedTweet {
   const permalinkNode = getStatusLink(scope, tweetRoot, Boolean(tweetRoot));
-  const permalink = permalinkNode?.href;
+  const permalink = resolvePermalinkFromScope(scope, tweetRoot, Boolean(tweetRoot));
   const textContent = collectTweetText(scope, tweetRoot, Boolean(tweetRoot));
   const authorAndHandle = extractAuthorAndHandle(scope, tweetRoot, permalink);
 
@@ -709,7 +819,7 @@ function isExternalCandidate(url: string): boolean {
     return false;
   }
 
-  const isInternal = /(^|\.)x\.com$/i.test(parsed.hostname) || /(^|\.)twitter\.com$/i.test(parsed.hostname);
+  const isInternal = isInternalXHostname(parsed.hostname);
   if (!isInternal) {
     return true;
   }
@@ -727,7 +837,7 @@ function isExternalCandidate(url: string): boolean {
 }
 
 function createHandleId(element: HTMLElement, index: number): string {
-  const permalink = getStatusLink(element, element, true)?.href;
+  const permalink = resolvePermalinkFromScope(element, element, true);
   const statusId = getStatusIdFromUrl(permalink);
   const canonical = statusId ? `x-status-${statusId}` : permalink;
 
@@ -931,7 +1041,7 @@ export class XAdapter implements Adapter {
       return null;
     }
 
-    const permalink = getStatusLink(handle.element, handle.element, true)?.href;
+    const permalink = resolvePermalinkFromScope(handle.element, handle.element, true);
     const statusId = getStatusIdFromUrl(permalink);
     if (statusId) {
       return statusId;
@@ -1025,6 +1135,10 @@ export class XAdapter implements Adapter {
     };
   }
 
+  getPermalink(handle: PostHandle): string | null {
+    return resolvePermalinkFromScope(handle.element, handle.element, true) ?? null;
+  }
+
   async notInterested(handle: PostHandle): Promise<ActionResult> {
     const caretButton =
       handle.element.querySelector<HTMLElement>("button[data-testid='caret']") ??
@@ -1079,9 +1193,15 @@ export class XAdapter implements Adapter {
 
   openDetails(handle: PostHandle): ActionResult {
     const threadLink = getStatusLink(handle.element, handle.element, true) ?? getStatusLink(handle.element);
+    const permalink = this.getPermalink(handle);
 
     if (!threadLink?.href) {
-      return { ok: false, message: "Thread URL was not found." };
+      if (!permalink) {
+        return { ok: false, message: "Thread URL was not found." };
+      }
+
+      window.location.assign(permalink);
+      return { ok: true, message: "Opened details." };
     }
 
     threadLink.click();

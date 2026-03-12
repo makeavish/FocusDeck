@@ -1358,7 +1358,8 @@ async function openFocusedPostInBackground(): Promise<void> {
     return;
   }
 
-  const permalink = engine.getViewState()?.focusedMeta?.permalink;
+  const viewState = engine.getViewState();
+  const permalink = viewState?.focusedMeta?.permalink ?? (viewState?.focusedHandle ? adapter?.getPermalink?.(viewState.focusedHandle) : null);
   if (!permalink) {
     setStatus("Unable to find this post link.");
     return;

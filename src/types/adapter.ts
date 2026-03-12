@@ -67,6 +67,7 @@ export interface Adapter {
   isAdvertisement?(handle: PostHandle): boolean;
   focusItem(handle: PostHandle): void;
   getPostMeta(handle: PostHandle): PostMeta | null;
+  getPermalink?(handle: PostHandle): string | null;
   notInterested(handle: PostHandle): ActionResult | Promise<ActionResult>;
   bookmark(handle: PostHandle): ActionResult | Promise<ActionResult>;
   openOriginal?(handle: PostHandle): ActionResult | Promise<ActionResult>;
