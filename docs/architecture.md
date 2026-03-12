@@ -117,6 +117,7 @@ This section replaces the standalone `implementation_plan.md`.
 - TypeScript + Vite multi-build
 - Chrome target: `dist/chrome`
 - Firefox target: `dist/firefox`
+- `npm run pack` produces Chrome, Firefox, and source release ZIPs in `release/`
 - Promise-based `browser.*` via `webextension-polyfill`
 
 ### Cleanup Status

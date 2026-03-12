@@ -144,12 +144,7 @@ npm run build:firefox
 - `npm run typecheck`
 - `npm run test`
 - `npm run build`
-- `npm run release && npm run pack` (writes versioned ZIPs to `release/`)
-
-Release scope since `v0.2.2` (`2026-02-28`):
-- `cef7681` Fix X article post permalink resolution
-- `77d7c39` Add X distraction hiding setting
-- `b716219` Add Following feed bypass support
+- `npm run release && npm run pack` (writes Chrome, Firefox, and source ZIPs to `release/`)
 
 ## Firefox Reviewer Build Instructions
 
@@ -187,6 +182,7 @@ npm run release:firefox
 - `dist/firefox/manifest.json`
 - `dist/firefox/content.js`
 - `release/focusdeck-firefox-v0.3.0.zip` (if `npm run pack:firefox` is executed)
+- `release/focusdeck-source-v0.3.0.zip` (if `npm run pack:source` or `npm run pack` is executed)
 
 ### Source Integrity
 

@@ -15,7 +15,8 @@
     "release": "RELEASE=1 npm run build",
     "pack:chrome": "mkdir -p release && rm -f release/focusdeck-chrome-v$npm_package_version.zip && cd dist/chrome && zip -r ../../release/focusdeck-chrome-v$npm_package_version.zip . -x '*.map'",
     "pack:firefox": "mkdir -p release && rm -f release/focusdeck-firefox-v$npm_package_version.zip && cd dist/firefox && zip -r ../../release/focusdeck-firefox-v$npm_package_version.zip . -x '*.map'",
-    "pack": "npm run pack:chrome && npm run pack:firefox"
+    "pack:source": "mkdir -p release && rm -f release/focusdeck-source-v$npm_package_version.zip && git archive --format=zip --output=release/focusdeck-source-v$npm_package_version.zip HEAD",
+    "pack": "npm run pack:chrome && npm run pack:firefox && npm run pack:source"
   },
   "dependencies": {
     "webextension-polyfill": "^0.12.0"
