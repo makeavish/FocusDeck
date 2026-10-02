@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { getXMutationCards } from "@/adapters/x-dom";
+import { getXMutationCards, isXAdUnit } from "@/adapters/x-dom";
 
 class FakeElement {
   children: FakeElement[] = [];
@@ -60,5 +60,20 @@ describe("getXMutationCards", () => {
     const quoted = new FakeElement("article", "tweet", quoteBox);
 
     expect(getXMutationCards([record(quoted)]).size).toBe(0);
+  });
+
+  it("treats only placementTracking outside a post as an ad unit", () => {
+    vi.stubGlobal("Element", FakeElement);
+    const cell = new FakeElement("div", "cellInnerDiv");
+    const promoted = new FakeElement("div", "placementTracking", cell);
+    const promotedPost = new FakeElement("article", "tweet", promoted);
+    const organic = new FakeElement("article", "tweet");
+    const playerTracking = new FakeElement("div", "placementTracking", organic);
+    new FakeElement("div", "videoPlayer", playerTracking);
+
+    expect(isXAdUnit(promoted as unknown as HTMLElement)).toBe(true);
+    expect(isXAdUnit(promotedPost as unknown as HTMLElement)).toBe(true);
+    expect(isXAdUnit(organic as unknown as HTMLElement)).toBe(false);
+    expect(isXAdUnit(playerTracking as unknown as HTMLElement)).toBe(false);
   });
 });

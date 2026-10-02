@@ -13,7 +13,9 @@ export function isXAdUnit(root: HTMLElement): boolean {
   if (Array.from(markers).some(outsideContent)) {
     return true;
   }
-  return root.matches("[data-testid='placementTracking']") || Boolean(root.closest("[data-testid='placementTracking']"));
+  // X also wraps in-post video players in placementTracking; only a wrapper outside any post marks an ad unit.
+  const tracking = root.closest<HTMLElement>("[data-testid='placementTracking']");
+  return Boolean(tracking && !tracking.parentElement?.closest(X_CARD_SELECTOR));
 }
 
 export function hasXFeedMutation(records: MutationRecord[]): boolean {

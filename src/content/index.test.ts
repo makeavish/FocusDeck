@@ -22,11 +22,16 @@ const state = vi.hoisted(() => ({
   claims: [] as (string | undefined)[],
   reservations: [] as string[],
   dailyModalShows: 0,
-  acknowledgments: [] as { progressKey: string }[]
+  acknowledgments: [] as { progressKey: string }[],
+  runtimeId: "focusdeck-test" as string | undefined,
+  unmounted: 0
 }));
 
 vi.mock("@/shared/browser-polyfill", () => ({ browserApi: {
-  runtime: { onMessage: { addListener: (listener: typeof state.messageListener) => { state.messageListener = listener; } } },
+  runtime: {
+    get id() { return state.runtimeId; },
+    onMessage: { addListener: (listener: typeof state.messageListener) => { state.messageListener = listener; } }
+  },
   storage: { onChanged: { addListener: (listener: typeof state.storageListener) => { state.storageListener = listener; } } }
 } }));
 vi.mock("@/shared/storage", () => ({
@@ -90,6 +95,7 @@ vi.mock("@/content/overlay/overlay", () => ({ OverlayController: class {
   view: DeckViewState | null = null;
   constructor(private callbacks: { onBlockingModalVisibilityChange: (visible: boolean) => void }) { state.overlay = this; }
   mount() {}
+  unmount() { state.unmounted += 1; this.callbacks.onBlockingModalVisibilityChange(false); }
   setView(view: DeckViewState | null) { this.view = view; }
   setPromptVisible(visible: boolean) { this.prompt = visible; this.syncBlocking(); }
   setDailyLimitReached(visible: boolean) { if (visible) state.dailyModalShows += 1; this.daily = visible; this.syncBlocking(); }
@@ -117,6 +123,7 @@ class FixtureElement {
   getAttribute(name: string) { return this.attributes.get(name) ?? null; }
   hasAttribute(name: string) { return this.attributes.has(name); }
   removeAttribute(name: string) { this.attributes.delete(name); }
+  remove() { this.isConnected = false; }
   top = 0;
   height = 120;
   getBoundingClientRect() { return { top: this.top, bottom: this.top + this.height, left: 0, height: this.height }; }
@@ -192,6 +199,8 @@ describe("content runtime gating and route reconciliation", () => {
     state.snapshot = null;
     state.clears = 0;
     state.scans = 0;
+    state.runtimeId = "focusdeck-test";
+    state.unmounted = 0;
     state.acknowledgments = [];
     state.dailyModalShows = 0;
     state.claimRead = null;
@@ -305,6 +314,24 @@ describe("content runtime gating and route reconciliation", () => {
     expect(element.hasAttribute("data-focusdeck-post-limit-blocked")).toBe(false);
     expect((element as HTMLElement & { inert: boolean }).inert).toBe(false);
     expect(state.items[1].element.getAttribute("data-focusdeck-post-limit-blocked")).toBe("true");
+  });
+
+  it("removes all gating once the extension context is invalidated", async () => {
+    await start();
+    await vi.advanceTimersByTimeAsync(20); await settle();
+    const [focused, neighbor] = state.items.map((item) => item.element);
+    expect(neighbor.getAttribute("data-focusdeck-hidden")).toBe("true");
+
+    state.runtimeId = undefined;
+    await vi.advanceTimersByTimeAsync(250); await settle();
+    expect(focused.hasAttribute("data-focusdeck-focused")).toBe(false);
+    expect(neighbor.hasAttribute("data-focusdeck-hidden")).toBe(false);
+    expect(state.unmounted).toBe(1);
+
+    mutation(neighbor);
+    await vi.advanceTimersByTimeAsync(20); await settle();
+    expect(neighbor.hasAttribute("data-focusdeck-hidden")).toBe(false);
+    expect(neighbor.hasAttribute("data-focusdeck-locked")).toBe(false);
   });
 
   it("hides blocking modals and unlocks scroll when leaving a daily-blocked feed", async () => {

@@ -1,5 +1,5 @@
 import { XAdapter } from "@/adapters/x-adapter";
-import { getXMutationCards, hasXFeedMutation, isXAdUnit, X_FEED_MUTATION_ATTRIBUTES } from "@/adapters/x-dom";
+import { getXMutationCards, hasXFeedMutation, isXAdUnit, X_CARD_SELECTOR, X_FEED_MUTATION_ATTRIBUTES } from "@/adapters/x-dom";
 import { AdapterRegistry } from "@/core/adapter-registry";
 import { ActionDispatcher } from "@/core/action-dispatcher";
 import { isDailyLimitReached, millisecondsUntilMidnight } from "@/core/daily-counter";
@@ -49,6 +49,7 @@ let keyboardCleanup: (() => void) | null = null;
 let statusTimerId: number | null = null;
 let resumeRecoveryTimerIds: number[] = [];
 let postLimitExploreMode = false;
+let contextInvalidated = false;
 let recoveredPresentationPostId: string | null = null;
 let postLimitViewedProgressKeys = new Set<string>();
 let postLimitEnforceRafId = 0;
@@ -162,6 +163,10 @@ function applyThemeModeFromConfig(config: SessionConfig | null | undefined): voi
 }
 
 function setStatus(message: string, timeoutMs = 2400): void {
+  if (contextInvalidated) {
+    return;
+  }
+
   const overlayRef = ensureOverlay();
   overlayRef.setStatus(message);
 
@@ -574,7 +579,7 @@ function isFollowingFeedBypassActive(): boolean {
 }
 
 function setFeedLocked(locked: boolean, force = false, feedItems?: PostHandle[]): void {
-  if (!adapter) {
+  if (!adapter || contextInvalidated) {
     return;
   }
 
@@ -691,7 +696,7 @@ function setPopupScrollLocked(locked: boolean): void {
 }
 
 function setAdUnitsHidden(force = false): void {
-  if (!force && !document.body) {
+  if (contextInvalidated || (!force && !document.body)) {
     return;
   }
 
@@ -873,7 +878,8 @@ function setAuxiliaryUiHidden(hidden: boolean, force = false, feedItems?: PostHa
     const hasArticle = articles.length > 0;
     const isKnownPost = articles.some((article) => knownFeedArticles.has(article));
     const hideAsNonFeedArticle = hasKnownFeedPosts && hasArticle && !isKnownPost;
-    const hideAsPromotedModule = hasKnownFeedPosts && !hasArticle && cell.matches("[data-testid='placementTracking']");
+    const hideAsPromotedModule = hasKnownFeedPosts && !hasArticle && cell.matches("[data-testid='placementTracking']") &&
+      !cell.closest(X_CARD_SELECTOR);
 
     if (hideAsNonFeedArticle || hideAsPromotedModule) {
       cell.setAttribute("data-focusdeck-hidden-ui", "true");
@@ -901,6 +907,11 @@ function ensureFeedMutationObserver(): void {
   const target = document.documentElement;
 
   feedMutationObserver = new MutationObserver((records) => {
+    if (contextInvalidated || !hasExtensionContext()) {
+      teardownOrphanedScript();
+      return;
+    }
+
     if (!hasXFeedMutation(records)) {
       return;
     }
@@ -1128,6 +1139,10 @@ function createPlaybackFocusLayerSync(): { syncNow: () => void; syncSoon: () => 
 }
 
 function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
+  if (contextInvalidated) {
+    return;
+  }
+
   if (!adapter) {
     lastFocusedVideoHydrationPostId = null;
     clearFocusLayerFreezeForPost(focusLayerFreezePostId);
@@ -1845,7 +1860,7 @@ function registerBlockedPostInteractionGuard(): void {
 }
 
 async function handleRouteChange(): Promise<void> {
-  if (!adapter) {
+  if (!adapter || contextInvalidated) {
     return;
   }
 
@@ -1975,12 +1990,70 @@ function wrapHistoryRouting(): void {
   });
 }
 
+function hasExtensionContext(): boolean {
+  try {
+    return Boolean(browserApi.runtime?.id);
+  } catch {
+    return false;
+  }
+}
+
+// After the extension reloads or updates, Chrome keeps this script running in open tabs without extension
+// access. Undo every page change so X works normally until the tab reloads with the new script.
+function teardownOrphanedScript(): void {
+  if (contextInvalidated) {
+    return;
+  }
+
+  contextInvalidated = true;
+  feedMutationObserver?.disconnect();
+  feedMutationObserver = null;
+  if (routeFallbackTimerId !== null) {
+    window.clearInterval(routeFallbackTimerId);
+    routeFallbackTimerId = null;
+  }
+  if (midnightTimerId !== null) {
+    window.clearTimeout(midnightTimerId);
+    midnightTimerId = null;
+  }
+  keyboardCleanup?.();
+  keyboardCleanup = null;
+  postLimitExploreMode = false;
+  void engine?.dispose().catch(() => undefined);
+  engine = null;
+
+  setPopupScrollLocked(false);
+  clearFocusLayer();
+  clearPostLimitBlockedMarkers();
+  for (const attr of [AD_HIDDEN_ATTR, DISTRACTION_HIDDEN_ATTR, "data-focusdeck-hidden-ui"]) {
+    document.querySelectorAll<HTMLElement>(`[${attr}]`).forEach((node) => node.removeAttribute(attr));
+  }
+  document.getElementById(FOCUS_STYLE_ID)?.remove();
+  overlay?.unmount();
+  overlay = null;
+}
+
+function registerContextInvalidationGuard(): void {
+  window.addEventListener("unhandledrejection", (event: PromiseRejectionEvent) => {
+    const message = event.reason instanceof Error ? event.reason.message : String(event.reason ?? "");
+    if (message.includes("Extension context invalidated")) {
+      event.preventDefault();
+      teardownOrphanedScript();
+    }
+  });
+}
+
 function registerRouteFallbackWatcher(): void {
   if (routeFallbackTimerId !== null) {
     return;
   }
 
   routeFallbackTimerId = window.setInterval(() => {
+    if (!hasExtensionContext()) {
+      teardownOrphanedScript();
+      return;
+    }
+
     if (window.location.href === lastRoute) {
       return;
     }
@@ -2164,6 +2237,7 @@ async function bootstrap(): Promise<void> {
   registerStorageWatchers();
   registerDailyRefresh();
   wrapHistoryRouting();
+  registerContextInvalidationGuard();
   registerRouteFallbackWatcher();
   registerMessageHandlers();
   applyThemeModeFromConfig(await getSessionConfig());
