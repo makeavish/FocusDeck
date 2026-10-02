@@ -73,10 +73,11 @@ The extension does not use a browser-action popup because clicking the toolbar i
 Stores session configuration, theme preference, daily limits and usage counters, and session snapshots locally. No data leaves the browser.
 
 ### `tabs`
-Used for three purposes only:
+Used for four purposes only:
 1. When the user clicks the toolbar icon, FocusDeck queries open tabs to check if the Settings page is already open (to re-focus it rather than opening a duplicate).
 2. The "Close tab" action in the daily-limit modal removes the current tab via `tabs.remove`.
 3. The `Open` action opens the focused post in an inactive background tab via `tabs.create` (same window when available).
+4. To resume an unfinished session only after its original tab has closed, FocusDeck checks which tab IDs are still open via `tabs.query`. Only numeric tab IDs are compared.
 
 No browsing history, tab URLs, or other tab metadata is collected or stored.
 

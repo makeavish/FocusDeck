@@ -62,6 +62,8 @@ let savedDailyLimits: DailyLimitsConfig | null = null;
 let savedSiteSettings: SiteSettings | null = null;
 let todayUsage: DailyUsage | null = null;
 let dirty = false;
+let draftRevision = 0;
+let saveInFlight = false;
 
 function setStatus(message: string): void {
   status.textContent = message;
@@ -74,6 +76,7 @@ function setDirty(next: boolean): void {
 }
 
 function markUnsaved(): void {
+  draftRevision += 1;
   setDirty(true);
   setStatus("Unsaved changes");
 }
@@ -161,76 +164,91 @@ function normalizeDailyLimits(limits: DailyLimitsConfig | null | undefined): Dai
   };
 }
 
-function readDailyLimitPayload(baseLimits: DailyLimitsConfig | null | undefined): DailyLimitsConfig {
+function readDailyLimitPayload(baseLimits: DailyLimitsConfig | null | undefined, savedDraft: DraftState): DailyLimitsConfig {
   const normalized = normalizeDailyLimits(baseLimits);
   return {
     global: {
-      maxPosts: draft.sharedDailyLimit
+      maxPosts: savedDraft.sharedDailyLimit
     },
     perSite: { ...normalized.perSite }
   };
 }
 
 async function applyAllChanges(): Promise<void> {
+  if (saveInFlight) {
+    return;
+  }
   syncDraftFromForm();
-  const [existingLimitsRes, existingSiteSettingsRes] = await Promise.all([
-    send<DailyLimitsConfig>({ type: "focusdeck:get-daily-limits" }),
-    send<SiteSettings>({ type: "focusdeck:get-site-settings", siteId: SITE_ID })
-  ]);
-  const baseLimits = existingLimitsRes.ok && existingLimitsRes.data ? existingLimitsRes.data : savedDailyLimits;
-  const dailyLimitPayload = readDailyLimitPayload(baseLimits);
-  const siteSettingsPayload: Partial<SiteSettings> = {
-    hideDistractingElements: draft.hideDistractingElements,
-    bypassFollowingFeed: draft.bypassFollowingFeed
-  };
-  const existingSiteSettings =
-    existingSiteSettingsRes.ok && existingSiteSettingsRes.data ? existingSiteSettingsRes.data : savedSiteSettings;
-  if (existingSiteSettings?.enabled === false) {
-    siteSettingsPayload.enabled = false;
+  const savedDraft = { ...draft };
+  const revision = draftRevision;
+  saveInFlight = true;
+  try {
+    const [existingLimitsRes, existingSiteSettingsRes] = await Promise.all([
+      send<DailyLimitsConfig>({ type: "focusdeck:get-daily-limits" }),
+      send<SiteSettings>({ type: "focusdeck:get-site-settings", siteId: SITE_ID })
+    ]);
+    const baseLimits = existingLimitsRes.ok && existingLimitsRes.data ? existingLimitsRes.data : savedDailyLimits;
+    const dailyLimitPayload = readDailyLimitPayload(baseLimits, savedDraft);
+    const siteSettingsPayload: Partial<SiteSettings> = {
+      hideDistractingElements: savedDraft.hideDistractingElements,
+      bypassFollowingFeed: savedDraft.bypassFollowingFeed
+    };
+    const existingSiteSettings =
+      existingSiteSettingsRes.ok && existingSiteSettingsRes.data ? existingSiteSettingsRes.data : savedSiteSettings;
+    if (existingSiteSettings?.enabled === false) {
+      siteSettingsPayload.enabled = false;
+    }
+
+    const [configRes, limitsRes, siteSettingsRes] = await Promise.all([
+      send<SessionConfig>({
+        type: "focusdeck:set-config",
+        payload: { themeMode: savedDraft.themeMode }
+      }),
+      send<DailyLimitsConfig>({
+        type: "focusdeck:set-daily-limits",
+        payload: dailyLimitPayload
+      }),
+      send<SiteSettings>({
+        type: "focusdeck:set-site-settings",
+        siteId: SITE_ID,
+        payload: siteSettingsPayload
+      })
+    ]);
+
+    if (!configRes.ok) {
+      setStatus(configRes.error ?? "Couldn't save the theme.");
+      return;
+    }
+
+    if (!limitsRes.ok) {
+      setStatus(limitsRes.error ?? "Couldn't save the daily limit.");
+      return;
+    }
+
+    if (limitsRes.data) {
+      savedDailyLimits = normalizeDailyLimits(limitsRes.data);
+    }
+
+    if (!siteSettingsRes.ok) {
+      setStatus(siteSettingsRes.error ?? "Couldn't save feed settings.");
+      return;
+    }
+
+    if (siteSettingsRes.data) {
+      savedSiteSettings = siteSettingsRes.data;
+    }
+
+    cacheThemeMode(savedDraft.themeMode);
+    if (revision === draftRevision) {
+      setDirty(false);
+      setStatus("Changes saved");
+    } else {
+      setDirty(true);
+      setStatus("Unsaved changes");
+    }
+  } finally {
+    saveInFlight = false;
   }
-
-  const [configRes, limitsRes, siteSettingsRes] = await Promise.all([
-    send<SessionConfig>({
-      type: "focusdeck:set-config",
-      payload: { themeMode: draft.themeMode }
-    }),
-    send<DailyLimitsConfig>({
-      type: "focusdeck:set-daily-limits",
-      payload: dailyLimitPayload
-    }),
-    send<SiteSettings>({
-      type: "focusdeck:set-site-settings",
-      siteId: SITE_ID,
-      payload: siteSettingsPayload
-    })
-  ]);
-
-  if (!configRes.ok) {
-    setStatus(configRes.error ?? "Couldn't save the theme.");
-    return;
-  }
-
-  if (!limitsRes.ok) {
-    setStatus(limitsRes.error ?? "Couldn't save the daily limit.");
-    return;
-  }
-
-  if (limitsRes.data) {
-    savedDailyLimits = normalizeDailyLimits(limitsRes.data);
-  }
-
-  if (!siteSettingsRes.ok) {
-    setStatus(siteSettingsRes.error ?? "Couldn't save feed settings.");
-    return;
-  }
-
-  if (siteSettingsRes.data) {
-    savedSiteSettings = siteSettingsRes.data;
-  }
-
-  cacheThemeMode(draft.themeMode);
-  setDirty(false);
-  setStatus("Changes saved");
 }
 
 async function loadData(): Promise<void> {
@@ -310,6 +328,7 @@ resetDefaults.addEventListener("click", () => {
   draft.bypassFollowingFeed = false;
   renderDraftToForm();
   renderUsage();
+  draftRevision += 1;
   setDirty(true);
   setStatus("Defaults restored. Save to keep them.");
 });

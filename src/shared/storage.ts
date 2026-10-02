@@ -1,4 +1,4 @@
-import { normalizeUsageForDate } from "@/core/daily-counter";
+import { localDateKey, normalizeUsageForDate } from "@/core/daily-counter";
 import { DEFAULT_DAILY_LIMITS, DEFAULT_SESSION_CONFIG, DEFAULT_SITE_SETTINGS, STORAGE_KEYS } from "@/shared/constants";
 import { browserApi } from "@/shared/browser-polyfill";
 import type { SiteSettings } from "@/types/messages";
@@ -13,13 +13,6 @@ type StorageShape = {
   [STORAGE_KEYS.dailyLimits]?: DailyLimitsConfig;
   [STORAGE_KEYS.dailyUsage]?: DailyUsage;
 };
-
-function nowDateKey(date = new Date()): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  return `${year}-${month}-${day}`;
-}
 
 async function storageGet<Key extends keyof StorageShape>(key: Key): Promise<StorageShape[Key] | undefined> {
   const items = await browserApi.storage.local.get(key);
@@ -91,21 +84,7 @@ function normalizeDailyLimitsConfig(limits: unknown): DailyLimitsConfig {
 }
 
 function normalizeDailyUsage(usage: unknown, dateKey: string): DailyUsage {
-  const normalized = normalizeUsageForDate((usage as DailyUsage | null | undefined) ?? null, dateKey);
-  return {
-    dateKey: normalized.dateKey,
-    global: {
-      postsViewed: toNonNegativeInt(normalized.global.postsViewed, 0)
-    },
-    perSite: Object.fromEntries(
-      Object.entries(normalized.perSite).map(([siteId, bucket]) => [
-        siteId,
-        {
-          postsViewed: toNonNegativeInt(bucket.postsViewed, 0)
-        }
-      ])
-    )
-  };
+  return normalizeUsageForDate(usage, dateKey);
 }
 
 function isPauseReason(value: unknown): value is SessionSnapshot["pauseReason"] {
@@ -124,7 +103,7 @@ function isSessionPhase(value: unknown): value is SessionSnapshot["phase"] {
   return value === "idle" || value === "prompting" || value === "active" || value === "paused" || value === "completed";
 }
 
-function normalizeSessionSnapshot(snapshot: unknown): SessionSnapshot | null {
+export function normalizeSessionSnapshot(snapshot: unknown): SessionSnapshot | null {
   if (!isObject(snapshot)) {
     return null;
   }
@@ -145,6 +124,13 @@ function normalizeSessionSnapshot(snapshot: unknown): SessionSnapshot | null {
     : [];
 
   return {
+    ...(typeof snapshot.sessionId === "string" && snapshot.sessionId ? { sessionId: snapshot.sessionId } : {}),
+    ...(Array.isArray(snapshot.pendingPresentations) ? {
+      pendingPresentations: snapshot.pendingPresentations.filter((view) => isObject(view) &&
+        typeof view.progressKey === "string" && viewedPostIds.includes(view.progressKey) &&
+        (view.postId === null || typeof view.postId === "string"))
+        .map((view) => ({ progressKey: view.progressKey as string, postId: view.postId as string | null }))
+    } : {}),
     phase: isSessionPhase(snapshot.phase) ? snapshot.phase : "idle",
     adapterId,
     config: normalizeSessionConfig(snapshot.config),
@@ -315,7 +301,7 @@ export async function setDailyLimits(limits: DailyLimitsConfig): Promise<DailyLi
 
 export async function getDailyUsage(): Promise<DailyUsage> {
   const stored = await storageGet(STORAGE_KEYS.dailyUsage);
-  const usage = normalizeDailyUsage(stored, nowDateKey());
+  const usage = normalizeDailyUsage(stored, localDateKey());
 
   if (!stored || hasChanged(stored, usage)) {
     await storageSet({ [STORAGE_KEYS.dailyUsage]: usage });
@@ -325,13 +311,13 @@ export async function getDailyUsage(): Promise<DailyUsage> {
 }
 
 export async function setDailyUsage(usage: DailyUsage): Promise<DailyUsage> {
-  const normalized = normalizeDailyUsage(usage, nowDateKey());
+  const normalized = normalizeDailyUsage(usage, localDateKey());
   await storageSet({ [STORAGE_KEYS.dailyUsage]: normalized });
   return normalized;
 }
 
 export async function clearDailyUsage(): Promise<DailyUsage> {
-  const reset = normalizeDailyUsage(null, nowDateKey());
+  const reset = normalizeDailyUsage(null, localDateKey());
   await storageSet({ [STORAGE_KEYS.dailyUsage]: reset });
   return reset;
 }

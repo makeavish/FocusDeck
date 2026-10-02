@@ -64,11 +64,12 @@ export interface Adapter {
   getFeedItems(): PostHandle[];
   findHandleById?(id: string): PostHandle | null;
   getProgressKey?(handle: PostHandle): string | null;
+  getHandleId?(element: HTMLElement): string | null;
   isAdvertisement?(handle: PostHandle): boolean;
   focusItem(handle: PostHandle): void;
   getPostMeta(handle: PostHandle): PostMeta | null;
   getPermalink?(handle: PostHandle): string | null;
-  notInterested(handle: PostHandle): ActionResult | Promise<ActionResult>;
+  notInterested(handle: PostHandle, isCurrent?: () => boolean): ActionResult | Promise<ActionResult>;
   bookmark(handle: PostHandle): ActionResult | Promise<ActionResult>;
   openOriginal?(handle: PostHandle): ActionResult | Promise<ActionResult>;
   observeFeedChanges?(onChange: () => void): () => void;

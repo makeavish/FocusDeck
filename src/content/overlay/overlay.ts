@@ -37,6 +37,37 @@ export class OverlayController {
   private shadow: ShadowRoot | null = null;
   private app: HTMLElement | null = null;
   private blockingModalVisible = false;
+  private focusBeforeModal: HTMLElement | null = null;
+  private focusKeyBeforeModal: string | null = null;
+
+  private readonly containModalFocus = (event: KeyboardEvent): void => {
+    if (!this.blockingModalVisible || event.key !== "Tab") {
+      return;
+    }
+    const modal = this.getActiveModal();
+    if (!modal) {
+      return;
+    }
+    const controls = Array.from(modal.querySelectorAll<HTMLElement>(
+      "button, input, select, textarea, a[href], [tabindex]"
+    )).filter((node) => node.tabIndex >= 0 && !node.matches(":disabled") && !node.closest("[hidden], [inert]"));
+    const active = this.shadow?.activeElement;
+    const index = controls.findIndex((node) => node === active);
+    const next = event.shiftKey
+      ? (index <= 0 ? controls.length - 1 : index - 1)
+      : (index + 1) % controls.length;
+    event.preventDefault();
+    event.stopPropagation();
+    (controls[next] ?? modal).focus({ preventScroll: true });
+  };
+
+  private readonly redirectModalFocus = (event: FocusEvent): void => {
+    const modal = this.getActiveModal();
+    const origin = event.composedPath()[0];
+    if (this.blockingModalVisible && modal && (!(origin instanceof Node) || !modal.contains(origin))) {
+      (modal.querySelector<HTMLElement>("[data-fd-autofocus]") ?? modal).focus({ preventScroll: true });
+    }
+  };
 
   private readonly state: OverlayState = {
     view: null,
@@ -82,11 +113,16 @@ export class OverlayController {
     this.host = host;
     this.shadow = shadow;
     this.app = app;
+    document.addEventListener("keydown", this.containModalFocus, true);
+    document.addEventListener("focusin", this.redirectModalFocus, true);
     this.render();
   }
 
   unmount(): void {
     this.setBlockingModalVisibility(false);
+    document.removeEventListener("keydown", this.containModalFocus, true);
+    document.removeEventListener("focusin", this.redirectModalFocus, true);
+    this.restorePreviousFocus();
 
     if (this.host) {
       this.host.remove();
@@ -143,6 +179,12 @@ export class OverlayController {
 
     const focusKey = this.readFocusKey();
     const modalWasVisible = this.blockingModalVisible;
+    const modalWillBeVisible = this.state.prompt.visible || this.state.dailyLimitReached;
+    if (!modalWasVisible && modalWillBeVisible) {
+      const active = this.shadow?.activeElement ?? document.activeElement;
+      this.focusBeforeModal = active instanceof HTMLElement ? active : null;
+      this.focusKeyBeforeModal = focusKey;
+    }
 
     this.app.className = `fd-root fd-theme-${this.resolveTheme()}`;
 
@@ -174,7 +216,11 @@ export class OverlayController {
     }
 
     this.setBlockingModalVisibility(this.state.prompt.visible || this.state.dailyLimitReached);
-    this.restoreFocus(focusKey, !modalWasVisible && this.blockingModalVisible);
+    if (modalWasVisible && !this.blockingModalVisible) {
+      this.restorePreviousFocus();
+    } else {
+      this.restoreFocus(focusKey, !modalWasVisible && this.blockingModalVisible);
+    }
   }
 
   // render() rebuilds the tree, so carry keyboard focus across by a stable key.
@@ -188,10 +234,26 @@ export class OverlayController {
       return;
     }
 
+    const scope = this.blockingModalVisible ? this.getActiveModal() : this.app;
     const target =
-      (focusKey ? this.app.querySelector<HTMLElement>(`[data-fd-focus-key="${focusKey}"]`) : null) ??
-      (modalOpened ? this.app.querySelector<HTMLElement>("[data-fd-autofocus]") : null);
+      (focusKey ? scope?.querySelector<HTMLElement>(`[data-fd-focus-key="${focusKey}"]`) : null) ??
+      (this.blockingModalVisible || modalOpened ? scope?.querySelector<HTMLElement>("[data-fd-autofocus]") ?? scope : null);
     target?.focus({ preventScroll: true });
+  }
+
+  private getActiveModal(): HTMLElement | null {
+    return this.app?.querySelector<HTMLElement>(".fd-daily-limit") ?? this.app?.querySelector<HTMLElement>(".fd-session-gate") ?? null;
+  }
+
+  private restorePreviousFocus(): void {
+    const previous = this.focusBeforeModal;
+    const target = previous?.isConnected ? previous :
+      this.focusKeyBeforeModal ? this.app?.querySelector<HTMLElement>(`[data-fd-focus-key="${this.focusKeyBeforeModal}"]`) : null;
+    if (target && !target.closest("[inert]")) {
+      target.focus({ preventScroll: true });
+    }
+    this.focusBeforeModal = null;
+    this.focusKeyBeforeModal = null;
   }
 
   private setBlockingModalVisibility(visible: boolean): void {
@@ -333,7 +395,7 @@ export class OverlayController {
   }
 
   private renderPrompt(): HTMLElement | null {
-    if (!this.state.prompt.visible) {
+    if (!this.state.prompt.visible || this.state.dailyLimitReached) {
       return null;
     }
 
@@ -344,6 +406,7 @@ export class OverlayController {
 
     const prompt = document.createElement("article");
     prompt.className = "fd-modal fd-session-gate";
+    prompt.tabIndex = -1;
     prompt.setAttribute("role", "dialog");
     prompt.setAttribute("aria-modal", "true");
     prompt.setAttribute("aria-labelledby", "fd-prompt-title");

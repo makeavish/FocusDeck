@@ -59,6 +59,10 @@ Click the toolbar icon to open Settings:
 - Redesigned session prompt, daily-limit dialog, session counter, and Settings page, with light and dark themes.
 - Session and daily-limit dialogs work from the keyboard and are announced to screen readers.
 - Posts left behind after a session show a lighter locked state.
+- Daily counts stay accurate across tabs, and open tabs pick up midnight resets and limit changes.
+- Closed gaps that let unseen posts show without counting: video playback, resuming, recycled posts, and returning from Following.
+- Sessions in one tab no longer resume, overwrite, or clear another open tab's session.
+- Save no longer removes an existing bookmark.
 
 ### 0.3.0
 

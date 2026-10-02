@@ -23,7 +23,7 @@ export async function generateIcons(outDir: string): Promise<void> {
 
 // Allow running standalone: tsx scripts/generate-icons.ts <outDir>
 const standaloneTarget = process.argv[2];
-if (standaloneTarget) {
+if (standaloneTarget && process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   void generateIcons(resolve(standaloneTarget)).then(() => {
     console.log(`Generated icons (${SIZES.join(", ")}px) -> ${standaloneTarget}`);
   });

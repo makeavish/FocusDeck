@@ -3,6 +3,10 @@ import type { DailyLimitsConfig, SessionConfig } from "@/types/session";
 export const STORAGE_KEYS = {
   sessionConfig: "focusdeck:session-config",
   sessionSnapshot: "focusdeck:session-snapshot",
+  sessionLeases: "focusdeck:session-leases",
+  sessionMigration: "focusdeck:session-migration",
+  dailyUsageEpoch: "focusdeck:daily-usage-epoch",
+  sessionSnapshots: "focusdeck:session-snapshots",
   siteSettings: "focusdeck:site-settings",
   dailyLimits: "focusdeck:daily-limits",
   dailyUsage: "focusdeck:daily-usage"

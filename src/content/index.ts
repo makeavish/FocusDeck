@@ -1,7 +1,8 @@
 import { XAdapter } from "@/adapters/x-adapter";
+import { getXMutationCards, hasXFeedMutation, isXAdUnit, X_FEED_MUTATION_ATTRIBUTES } from "@/adapters/x-dom";
 import { AdapterRegistry } from "@/core/adapter-registry";
 import { ActionDispatcher } from "@/core/action-dispatcher";
-import { isDailyLimitReached } from "@/core/daily-counter";
+import { isDailyLimitReached, millisecondsUntilMidnight } from "@/core/daily-counter";
 import { DeckEngine } from "@/core/deck-engine";
 import { resolveSessionStartConfig } from "@/core/session-config";
 import { installKeyboardShortcuts } from "@/content/keyboard";
@@ -25,15 +26,12 @@ import {
 import { browserApi } from "@/shared/browser-polyfill";
 import { OVERLAY_HOST_ID, STORAGE_KEYS } from "@/shared/constants";
 import {
-  clearSessionSnapshot,
-  getDailyLimits,
-  getDailyUsage,
   getSessionConfig,
-  getSessionSnapshot,
   getSiteSettings
 } from "@/shared/storage";
+import { claimSessionSnapshot, clearOwnedSessionSnapshot, getDailyContext } from "@/shared/runtime-state";
 import type { AdapterAction, PostHandle } from "@/types/adapter";
-import type { RuntimeMessage, RuntimeResponse, SiteSettings } from "@/types/messages";
+import type { DailyContext, RuntimeMessage, RuntimeResponse, SiteSettings } from "@/types/messages";
 import type { DailyUsage, SessionConfig, SessionSnapshot } from "@/types/session";
 
 const registry = new AdapterRegistry();
@@ -42,8 +40,6 @@ registry.register(new XAdapter());
 const adapter = registry.resolve(window.location.href);
 
 const FOCUS_STYLE_ID = "focusdeck-native-layer-style";
-const FEED_STRUCTURE_MUTATION_SELECTOR =
-  "article[data-testid='tweet'], article[role='article'], [data-testid='cellInnerDiv'], [data-testid='placementTracking'], [data-testid='primaryColumn'], [role='tab'][aria-selected]";
 const dispatcher = new ActionDispatcher();
 
 let overlay: OverlayController | null = null;
@@ -53,6 +49,7 @@ let keyboardCleanup: (() => void) | null = null;
 let statusTimerId: number | null = null;
 let resumeRecoveryTimerIds: number[] = [];
 let postLimitExploreMode = false;
+let recoveredPresentationPostId: string | null = null;
 let postLimitViewedProgressKeys = new Set<string>();
 let postLimitEnforceRafId = 0;
 let lastRoute = window.location.href;
@@ -62,6 +59,9 @@ let auxiliaryUiHiddenState: boolean | null = null;
 let distractingUiHiddenState: boolean | null = null;
 let feedMutationObserver: MutationObserver | null = null;
 let feedMutationRafId = 0;
+let feedMutationPending = false;
+let managedFeedActive = false;
+let managedFeedContext: Promise<DailyContext> | null = null;
 let lastFocusedVideoHydrationPostId: string | null = null;
 let idleRouteSyncInFlight = false;
 let focusLayerFreezePostId: string | null = null;
@@ -70,6 +70,14 @@ let videoPlaybackBypassPostId: string | null = null;
 let videoPlaybackBypassUntil = 0;
 let popupScrollLocked = false;
 let popupScrollUnlock: (() => void) | null = null;
+let routeGeneration = 0;
+let promptGeneration = 0;
+let startGeneration = 0;
+let startInFlight: Promise<boolean> | null = null;
+let dailyRefreshGeneration = 0;
+let midnightTimerId: number | null = null;
+// Cards currently allowed to show, keyed to the post identity they had when allowed.
+const allowedCardIds = new WeakMap<HTMLElement, string>();
 
 const AD_HIDDEN_ATTR = "data-focusdeck-ad-hidden";
 const DISTRACTION_HIDDEN_ATTR = "data-focusdeck-distraction-hidden";
@@ -167,8 +175,17 @@ function setStatus(message: string, timeoutMs = 2400): void {
   }, timeoutMs);
 }
 
+function canPresentRecoveredPost(): boolean {
+  return Boolean(recoveredPresentationPostId && (engine?.getFocusedPostId() === recoveredPresentationPostId || postLimitExploreMode));
+}
+
 function showDailyLimitModal(usage?: DailyUsage | null): void {
-  if (shouldSuppressFollowingLimitUi(isFollowingFeedBypassActive())) {
+  // Let a recovered charge be read once; the paused engine/viewed-only mode still blocks new progress.
+  if (canPresentRecoveredPost()) {
+    overlay?.setDailyLimitReached(false);
+    return;
+  }
+  if (!isFeedRoute(window.location.href) || !siteSettings?.enabled || shouldSuppressFollowingLimitUi(isFollowingFeedBypassActive())) {
     overlay?.setDailyLimitReached(false);
     return;
   }
@@ -192,19 +209,15 @@ function clearResumeRecoveryTimers(): void {
 }
 
 function isStoredSnapshotResumable(snapshot: SessionSnapshot | null | undefined): snapshot is SessionSnapshot {
-  if (!snapshot || snapshot.adapterId !== adapter?.id || snapshot.phase !== "paused") {
+  if (!snapshot || snapshot.adapterId !== adapter?.id || (snapshot.phase !== "paused" && snapshot.phase !== "active")) {
     return false;
   }
 
-  return (
-    snapshot.pauseReason === "followingBypass" ||
-    snapshot.pauseReason === "details" ||
-    snapshot.pauseReason === "navigation"
-  );
+  return true;
 }
 
 async function resumeStoredSession(snapshot?: SessionSnapshot | null): Promise<boolean> {
-  const nextSnapshot = snapshot ?? (await getSessionSnapshot());
+  const nextSnapshot = snapshot ?? (await claimSessionSnapshot(adapter!.id));
   if (!isStoredSnapshotResumable(nextSnapshot)) {
     return false;
   }
@@ -223,6 +236,9 @@ async function syncFollowingFeedBypassState(): Promise<boolean> {
 
   const bypassActive = isFollowingFeedBypassActive();
   if (bypassActive) {
+    recoveredPresentationPostId = null;
+    managedFeedActive = false;
+    managedFeedContext = null;
     if (engine && shouldPauseFollowingBypass(engine.getPhase())) {
       await engine.pause("followingBypass");
     }
@@ -237,29 +253,46 @@ async function syncFollowingFeedBypassState(): Promise<boolean> {
     return true;
   }
 
-  if (engine && isFeedRoute(window.location.href)) {
-    const view = engine.getViewState();
-    if (view?.snapshot.phase === "paused" && view.snapshot.pauseReason === "limit") {
-      overlay?.setView(view);
-      showDailyLimitModal(engine.getDailyUsage());
-    }
+  const managedFeed = isFeedRoute(window.location.href) && siteSettings?.enabled === true;
+  if (managedFeed && !managedFeedActive) {
+    setFeedLocked(true, true);
+    if (engine) managedFeedContext = getDailyContext();
+  }
+  managedFeedActive = managedFeed;
+  if (!managedFeed) managedFeedContext = null;
+
+  if (engine && managedFeed && (managedFeedContext || engine.getPauseReason() === "limit")) {
+    const currentEngine = engine;
+    const pendingContext = managedFeedContext ?? getDailyContext();
+    const context = await pendingContext;
+    if (engine !== currentEngine || !isFeedRoute(window.location.href) || isFollowingFeedBypassActive()) return false;
+    if (managedFeedContext === pendingContext) managedFeedContext = null;
+    currentEngine.setDailyContext(context.limits, context.usage);
+    const reached = isDailyLimitReached(context.limits, context.usage, adapter.id);
+    overlay?.setDailyLimitReached(reached && !canPresentRecoveredPost());
+    if (reached) showDailyLimitModal(context.usage);
+    else if (currentEngine.getPauseReason() === "limit") await currentEngine.resume();
   }
 
   if (
     engine &&
     isFeedRoute(window.location.href) &&
-    shouldResumeFromFollowingBypass(engine.getPhase(), engine.getViewState()?.snapshot.pauseReason ?? null)
+    (shouldResumeFromFollowingBypass(engine.getPhase(), engine.getPauseReason()) || engine.hasRoutePause() ||
+      ["details", "navigation"].includes(engine.getPauseReason() ?? ""))
   ) {
+    const currentEngine = engine;
     installSessionKeyboardShortcuts();
-    await engine.resume();
-    const view = engine.getViewState();
-    const restored = engine.restoreFocus(view?.snapshot.focusedPostId ?? null, false);
+    await currentEngine.resume();
+    const view = currentEngine.getViewState();
+    const restored = await currentEngine.restoreFocus(view?.snapshot.focusedPostId ?? null, false);
     if (!restored) {
-      engine.focusNearestToViewportCenter(true, false);
+      await currentEngine.focusNearestToViewportCenter(true);
+    }
+    if (engine !== currentEngine || !isFeedRoute(window.location.href) || isFollowingFeedBypassActive()) {
+      return false;
     }
     scheduleResumeFocusRecovery();
-    applyFocusLayer(engine.getViewState());
-    overlay?.setDailyLimitReached(false);
+    applyFocusLayer(currentEngine.getViewState());
     setStatus("Resumed session.", 2000);
     return false;
   }
@@ -276,7 +309,7 @@ function scheduleResumeFocusRecovery(): void {
   const delays = [0, 120, 300, 650, 1100, 1700];
 
   for (const delay of delays) {
-    const timerId = window.setTimeout(() => {
+    const timerId = window.setTimeout(async () => {
       if (!engine || engine.getPhase() !== "active" || !isFeedRoute(window.location.href)) {
         return;
       }
@@ -287,8 +320,9 @@ function scheduleResumeFocusRecovery(): void {
         return;
       }
 
-      engine.focusNearestToViewportCenter(true, false);
-      const recovered = engine.getViewState();
+      const currentEngine = engine;
+      await currentEngine.focusNearestToViewportCenter(true);
+      const recovered = engine === currentEngine ? currentEngine.getViewState() : null;
       if (recovered?.focusedHandle) {
         applyFocusLayer(recovered);
       }
@@ -400,6 +434,7 @@ function ensureFocusLayerStyle(): void {
 }
 
 function clearFocusLayer(): void {
+  feedLocked = false;
   document.querySelectorAll<HTMLElement>("[data-focusdeck-focused='true']").forEach((node) => {
     node.removeAttribute("data-focusdeck-focused");
   });
@@ -455,6 +490,7 @@ function applyPostLimitStateForHandle(handle: PostHandle): boolean {
   if (viewed) {
     handle.element.removeAttribute("data-focusdeck-post-limit-blocked");
     (handle.element as HTMLElement & { inert?: boolean }).inert = false;
+    allowedCardIds.set(handle.element, handle.id);
 
     // Keep both key forms for viewed posts so DOM key transitions remain playable.
     postLimitViewedProgressKeys.add(handle.id);
@@ -466,8 +502,8 @@ function applyPostLimitStateForHandle(handle: PostHandle): boolean {
   }
 
   handle.element.setAttribute("data-focusdeck-post-limit-blocked", "true");
-  // Avoid inert so stale virtualization state can self-correct on first interaction.
-  (handle.element as HTMLElement & { inert?: boolean }).inert = false;
+  (handle.element as HTMLElement & { inert?: boolean }).inert = true;
+  allowedCardIds.delete(handle.element);
   return true;
 }
 
@@ -507,6 +543,7 @@ function installSessionKeyboardShortcuts(): void {
   }
 
   keyboardCleanup = installKeyboardShortcuts({
+    isActive: () => engine?.getPhase() === "active" && isFeedRoute(window.location.href) && !isFollowingFeedBypassActive() && !popupScrollLocked,
     onNext: () => {
       void moveNext();
     },
@@ -536,7 +573,7 @@ function isFollowingFeedBypassActive(): boolean {
   return isFollowingBypassActive(siteSettings, Boolean(adapter) && isFeedRoute(window.location.href));
 }
 
-function setFeedLocked(locked: boolean, force = false): void {
+function setFeedLocked(locked: boolean, force = false, feedItems?: PostHandle[]): void {
   if (!adapter) {
     return;
   }
@@ -548,7 +585,7 @@ function setFeedLocked(locked: boolean, force = false): void {
 
   feedLocked = shouldLock;
 
-  for (const handle of adapter.getFeedItems()) {
+  for (const handle of feedItems ?? adapter.getFeedItems()) {
     if (shouldLock) {
       handle.element.setAttribute("data-focusdeck-locked", "true");
       handle.element.removeAttribute("data-focusdeck-focused");
@@ -560,29 +597,8 @@ function setFeedLocked(locked: boolean, force = false): void {
   }
 }
 
-function isAdMarkerText(raw: string): boolean {
-  const normalized = raw
-    .toLowerCase()
-    .replace(/\u00a0/g, " ")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-
-  return normalized === "ad" || normalized === "promoted" || normalized === "sponsored";
-}
-
 function isAdCell(cell: HTMLElement): boolean {
-  const directAriaMarker = cell.querySelector<HTMLElement>(
-    "[aria-label='Ad'], [aria-label='Promoted'], [aria-label='Sponsored']"
-  );
-  if (directAriaMarker) {
-    return true;
-  }
-
-  const marker = Array.from(cell.querySelectorAll<HTMLElement>("span, div, a")).find((node) =>
-    isAdMarkerText(node.textContent ?? "")
-  );
-  return Boolean(marker);
+  return isXAdUnit(cell);
 }
 
 function isInputLikeElement(target: EventTarget | null): boolean {
@@ -813,7 +829,7 @@ function setDistractingUiHidden(hidden: boolean, force = false): void {
   hideLeftNavDistractions();
 }
 
-function setAuxiliaryUiHidden(hidden: boolean, force = false): void {
+function setAuxiliaryUiHidden(hidden: boolean, force = false, feedItems?: PostHandle[]): void {
   if (!force && auxiliaryUiHiddenState === hidden) {
     return;
   }
@@ -845,7 +861,7 @@ function setAuxiliaryUiHidden(hidden: boolean, force = false): void {
     });
   }
 
-  const knownFeedArticles = new Set<HTMLElement>(adapter?.getFeedItems().map((handle) => handle.element) ?? []);
+  const knownFeedArticles = new Set<HTMLElement>((feedItems ?? adapter?.getFeedItems() ?? []).map((handle) => handle.element));
   const hasKnownFeedPosts = knownFeedArticles.size > 0;
 
   const feedCells = Array.from(
@@ -865,57 +881,53 @@ function setAuxiliaryUiHidden(hidden: boolean, force = false): void {
   }
 }
 
+function isAllowedCardUnchanged(card: HTMLElement): boolean {
+  const allowedId = allowedCardIds.get(card);
+  if (!allowedId || !adapter?.getHandleId) {
+    return false;
+  }
+
+  const shown = postLimitExploreMode
+    ? !card.hasAttribute("data-focusdeck-post-limit-blocked")
+    : card.hasAttribute("data-focusdeck-focused");
+  return shown && adapter.getHandleId(card) === allowedId;
+}
+
 function ensureFeedMutationObserver(): void {
   if (feedMutationObserver) {
     return;
   }
 
-  const target = document.querySelector<HTMLElement>("[data-testid='primaryColumn']") ?? document.querySelector<HTMLElement>("main") ?? document.body;
-  if (!target) {
-    return;
-  }
-
-  const touchesFeedStructure = (node: Node): boolean => {
-    if (!(node instanceof Element)) {
-      return false;
-    }
-
-    return node.matches(FEED_STRUCTURE_MUTATION_SELECTOR) || Boolean(node.querySelector(FEED_STRUCTURE_MUTATION_SELECTOR));
-  };
-
-  const hasFeedStructureMutation = (records: MutationRecord[]): boolean => {
-    for (const record of records) {
-      if (record.type === "attributes" && touchesFeedStructure(record.target)) {
-        return true;
-      }
-
-      for (const node of record.addedNodes) {
-        if (touchesFeedStructure(node)) {
-          return true;
-        }
-      }
-
-      for (const node of record.removedNodes) {
-        if (touchesFeedStructure(node)) {
-          return true;
-        }
-      }
-    }
-
-    return false;
-  };
+  const target = document.documentElement;
 
   feedMutationObserver = new MutationObserver((records) => {
-    if (!hasFeedStructureMutation(records)) {
+    if (!hasXFeedMutation(records)) {
       return;
     }
 
+    // Only touched cards need synchronous safety; broad reconciliation runs once per frame.
+    if (isFeedRoute(window.location.href) && !isFollowingFeedBypassActive()) {
+      if (!managedFeedActive && !feedLocked) setFeedLocked(true, true);
+      for (const card of getXMutationCards(records)) {
+        // A shown post's own player and controls mutate constantly; re-gate it only once it holds another post.
+        if (isAllowedCardUnchanged(card)) continue;
+        if (postLimitExploreMode) {
+          card.setAttribute("data-focusdeck-post-limit-blocked", "true");
+          (card as HTMLElement & { inert?: boolean }).inert = true;
+        } else {
+          card.removeAttribute("data-focusdeck-focused");
+          card.setAttribute("data-focusdeck-hidden", "true");
+          if (feedLocked || !engine) card.setAttribute("data-focusdeck-locked", "true");
+        }
+      }
+    }
     if (feedMutationRafId) {
+      feedMutationPending = true;
       return;
     }
 
-    feedMutationRafId = window.requestAnimationFrame(() => {
-      feedMutationRafId = 0;
+    feedMutationRafId = window.requestAnimationFrame(function reconcile() {
+      feedMutationPending = false;
       void (async () => {
         setAdUnitsHidden(true);
         setDistractingUiHidden(shouldHideDistractingElements(), true);
@@ -924,10 +936,12 @@ function ensureFeedMutationObserver(): void {
           return;
         }
 
-        setAuxiliaryUiHidden(postLimitExploreMode ? false : isFeedRoute(window.location.href), true);
+        const currentEngine = engine;
+        let view = currentEngine?.getViewState() ?? null;
+        setAuxiliaryUiHidden(postLimitExploreMode ? false : isFeedRoute(window.location.href), true, view?.feedItems);
 
         if (postLimitExploreMode) {
-          schedulePostLimitEnforcement();
+          enforcePostLimitExploreMode();
           return;
         }
 
@@ -937,16 +951,21 @@ function ensureFeedMutationObserver(): void {
         }
 
         if (feedLocked) {
-          setFeedLocked(true, true);
+          setFeedLocked(true, true, view?.feedItems);
           return;
         }
 
-        const view = engine.getViewState();
-        if (view?.snapshot.phase === "active" && !view.focusedHandle) {
-          engine.focusNearestToViewportCenter(true, false);
+        if (!currentEngine) return;
+        const focusedRect = view?.focusedHandle?.element.getBoundingClientRect();
+        const focusVisible = focusedRect && focusedRect.bottom > 0 && focusedRect.top < window.innerHeight && focusedRect.height > 20;
+        if (view?.snapshot.phase === "active" && !focusVisible) {
+          await currentEngine.focusNearestToViewportCenter(true);
+          view = currentEngine.getViewState();
         }
-        applyFocusLayer(engine.getViewState());
-      })();
+        if (engine === currentEngine) applyFocusLayer(view);
+      })().finally(() => {
+        feedMutationRafId = feedMutationPending ? window.requestAnimationFrame(reconcile) : 0;
+      });
     });
   });
 
@@ -954,7 +973,8 @@ function ensureFeedMutationObserver(): void {
     childList: true,
     subtree: true,
     attributes: true,
-    attributeFilter: ["aria-selected"]
+    characterData: true,
+    attributeFilter: X_FEED_MUTATION_ATTRIBUTES
   });
 }
 
@@ -979,6 +999,7 @@ function scheduleIdleRouteSync(): void {
 
       if (!isFeedRoute(window.location.href)) {
         overlay?.setPromptVisible(false);
+        overlay?.setDailyLimitReached(false);
         setAuxiliaryUiHidden(false);
         setFeedLocked(false);
         return;
@@ -1065,15 +1086,16 @@ function applyVideoPlaybackMutation(
 function createPlaybackFocusLayerSync(): { syncNow: () => void; syncSoon: () => void } {
   let rafId = 0;
 
-  const sync = (): void => {
+  const sync = async (): Promise<void> => {
     if (!engine || engine.getPhase() !== "active") {
       return;
     }
 
-    let view = engine.getViewState();
+    const currentEngine = engine;
+    let view = currentEngine.getViewState();
     if (view?.snapshot.phase === "active" && !view.focusedHandle) {
-      engine.focusNearestToViewportCenter(true, false);
-      view = engine.getViewState();
+      await currentEngine.focusNearestToViewportCenter(true);
+      view = engine === currentEngine ? currentEngine.getViewState() : null;
       if (!view?.focusedHandle) {
         return;
       }
@@ -1088,7 +1110,7 @@ function createPlaybackFocusLayerSync(): { syncNow: () => void; syncSoon: () => 
       rafId = 0;
     }
 
-    sync();
+    void sync();
   };
 
   const syncSoon = (): void => {
@@ -1098,7 +1120,7 @@ function createPlaybackFocusLayerSync(): { syncNow: () => void; syncSoon: () => 
 
     rafId = window.requestAnimationFrame(() => {
       rafId = 0;
-      sync();
+      void sync();
     });
   };
 
@@ -1125,7 +1147,7 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
     return;
   }
 
-  if (view?.snapshot.phase === "paused" && view.snapshot.pauseReason === "details") {
+  if (!isFeedRoute(window.location.href)) {
     lastFocusedVideoHydrationPostId = null;
     clearFocusLayerFreezeForPost(focusLayerFreezePostId);
     clearVideoPlaybackBypass(videoPlaybackBypassPostId);
@@ -1163,7 +1185,7 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
     clearFocusLayerFreezeForPost(focusLayerFreezePostId);
     clearVideoPlaybackBypass(videoPlaybackBypassPostId);
     clearFocusLayer();
-    setFeedLocked(false);
+    setFeedLocked(true);
     return;
   }
 
@@ -1174,58 +1196,11 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
     clearVideoPlaybackBypass(videoPlaybackBypassPostId);
   }
 
-  const focusedElement = view.focusedHandle?.element ?? null;
-  const hasReplayablePausedVideo = Boolean(
-    focusedElement &&
-      Array.from(focusedElement.querySelectorAll<HTMLVideoElement>("video")).some(
-        (video) => !video.ended && video.paused && (video.currentTime > 0 || video.readyState >= HTMLMediaElement.HAVE_METADATA)
-      )
-  );
-  if (hasReplayablePausedVideo) {
-    freezeFocusLayerForPost(focusedId, 20_000);
-    enableVideoPlaybackBypass(focusedId, 20_000);
-  }
-
-  const bypassActive = Boolean(focusedId && videoPlaybackBypassPostId === focusedId && Date.now() < videoPlaybackBypassUntil);
-  const freezeActive = Boolean(focusedId && focusLayerFreezePostId === focusedId && Date.now() < focusLayerFreezeUntil);
-
   setFeedLocked(false);
-
-  const handles = adapter.getFeedItems();
-  if (bypassActive) {
-    setAuxiliaryUiHidden(false);
-
-    for (const handle of handles) {
-      if (focusedId && handle.id === focusedId) {
-        if (!handle.element.hasAttribute("data-focusdeck-focused")) {
-          handle.element.setAttribute("data-focusdeck-focused", "true");
-        }
-      } else if (handle.element.hasAttribute("data-focusdeck-focused")) {
-        handle.element.removeAttribute("data-focusdeck-focused");
-      }
-
-      if (handle.element.hasAttribute("data-focusdeck-hidden")) {
-        handle.element.removeAttribute("data-focusdeck-hidden");
-      }
-      if (handle.element.hasAttribute("data-focusdeck-dimmed")) {
-        handle.element.removeAttribute("data-focusdeck-dimmed");
-      }
-      if (handle.element.hasAttribute("data-focusdeck-locked")) {
-        handle.element.removeAttribute("data-focusdeck-locked");
-      }
-    }
-
-    hydrateFocusedPostVideos(view.focusedHandle?.element ?? null, focusedId);
-    return;
-  }
-
-  if (freezeActive) {
-    hydrateFocusedPostVideos(view.focusedHandle?.element ?? null, focusedId);
-    return;
-  }
-
+  const handles = view.feedItems;
   for (const handle of handles) {
-    if (focusedId && handle.id === focusedId) {
+    if (handle.element === view.focusedHandle?.element && handle.id === focusedId) {
+      allowedCardIds.set(handle.element, handle.id);
       if (!handle.element.hasAttribute("data-focusdeck-focused")) {
         handle.element.setAttribute("data-focusdeck-focused", "true");
       }
@@ -1239,6 +1214,7 @@ function applyFocusLayer(view: ReturnType<DeckEngine["getViewState"]>): void {
         handle.element.removeAttribute("data-focusdeck-locked");
       }
     } else {
+      allowedCardIds.delete(handle.element);
       if (!handle.element.hasAttribute("data-focusdeck-hidden")) {
         handle.element.setAttribute("data-focusdeck-hidden", "true");
       }
@@ -1401,11 +1377,25 @@ async function maybeShowPrompt(): Promise<void> {
     return;
   }
 
+  const generation = ++promptGeneration;
+  const route = routeGeneration;
+  const isCurrent = () => generation === promptGeneration && route === routeGeneration && !engine &&
+    isFeedRoute(window.location.href) && !isFollowingFeedBypassActive();
   setAdUnitsHidden(true);
   siteSettings = siteSettings ?? (await getSiteSettings(adapter.id));
+  if (!isCurrent()) {
+    return;
+  }
   setDistractingUiHidden(shouldHideDistractingElements(), true);
 
   if (await syncFollowingFeedBypassState()) {
+    return;
+  }
+
+  if (!siteSettings.enabled) {
+    hideOverlaySessionUi();
+    setFeedLocked(false);
+    setAuxiliaryUiHidden(false);
     return;
   }
 
@@ -1413,7 +1403,11 @@ async function maybeShowPrompt(): Promise<void> {
     return;
   }
 
-  const [config, dailyLimits, dailyUsage] = await Promise.all([getSessionConfig(), getDailyLimits(), getDailyUsage()]);
+  const [config, context] = await Promise.all([getSessionConfig(), getDailyContext()]);
+  if (!isCurrent() || !siteSettings?.enabled) {
+    return;
+  }
+  const { limits: dailyLimits, usage: dailyUsage } = context;
   applyThemeModeFromConfig(config);
 
   if (postLimitExploreMode) {
@@ -1452,19 +1446,34 @@ async function maybeShowPrompt(): Promise<void> {
 }
 
 async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapshot?: SessionSnapshot | null): Promise<boolean> {
-  if (!adapter) {
+  if (startInFlight) {
+    return startInFlight;
+  }
+  const generation = ++startGeneration;
+  startInFlight = runSessionStart(overrides, resumeSnapshot, generation);
+  try {
+    return await startInFlight;
+  } finally {
+    startInFlight = null;
+  }
+}
+
+async function runSessionStart(overrides: Partial<SessionConfig>, resumeSnapshot: SessionSnapshot | null | undefined, generation: number): Promise<boolean> {
+  const route = routeGeneration;
+  const isCurrent = () => generation === startGeneration && route === routeGeneration && isFeedRoute(window.location.href);
+  if (!adapter || !isCurrent()) {
     return false;
   }
 
   ensureFocusLayerStyle();
   const overlayRef = ensureOverlay();
-  const [baseConfig, dailyLimits, dailyUsage, nextSiteSettings] = await Promise.all([
-    getSessionConfig(),
-    getDailyLimits(),
-    getDailyUsage(),
-    getSiteSettings(adapter.id)
+  const [baseConfig, context, nextSiteSettings] = await Promise.all([
+    getSessionConfig(), getDailyContext(), getSiteSettings(adapter.id)
   ]);
-
+  if (!isCurrent()) {
+    return false;
+  }
+  const { limits: dailyLimits, usage: dailyUsage } = context;
   siteSettings = nextSiteSettings;
 
   if (!siteSettings.enabled) {
@@ -1477,12 +1486,18 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
     return false;
   }
 
-  if (isDailyLimitReached(dailyLimits, dailyUsage, adapter.id)) {
+  if (!isCurrent()) return false;
+  const claimedSnapshot = await claimSessionSnapshot(adapter.id);
+  if (!isCurrent()) return false;
+
+  const candidate = resumeSnapshot ?? (engine ? null : claimedSnapshot);
+  const resumeForAdapter = isStoredSnapshotResumable(candidate) ? candidate : null;
+  const pendingRecovery = resumeForAdapter?.pendingPresentations?.length;
+  if (isDailyLimitReached(dailyLimits, dailyUsage, adapter.id) && !pendingRecovery) {
     showDailyLimitModal(dailyUsage);
     return false;
   }
 
-  const resumeForAdapter = resumeSnapshot && resumeSnapshot.adapterId === adapter.id ? resumeSnapshot : null;
   const resolved = resolveSessionStartConfig(baseConfig, overrides, resumeForAdapter, dailyLimits, dailyUsage);
   const nextConfig = resolved.config;
 
@@ -1498,29 +1513,52 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
   keyboardCleanup = null;
 
   if (engine) {
-    await engine.stop("manual");
+    const currentEngine = engine;
     engine = null;
+    await currentEngine.stop("manual");
+  }
+  if (!isCurrent()) {
+    return false;
   }
 
   overlayRef.setDailyLimitReached(false);
   overlayRef.setPromptPostLimitCap(null);
   setAuxiliaryUiHidden(true);
-  setFeedLocked(false);
+  setFeedLocked(true);
 
-  engine = new DeckEngine(adapter, dispatcher, dailyLimits, dailyUsage, {
+  recoveredPresentationPostId = null;
+  const localEngine: DeckEngine = new DeckEngine(adapter, dispatcher, dailyLimits, dailyUsage, {
+    observeFeed: false,
+    reconcileOwnership: (snapshot) => claimSessionSnapshot(adapter.id, snapshot.sessionId),
     onComplete: (summary) => {
       if (summary.reason === "posts-limit") {
-        void finishPostLimitSession();
+        void finishPostLimitSession(localEngine);
       }
     },
     onDailyLimitReached: () => {
       showDailyLimitModal(engine?.getDailyUsage() ?? null);
       setStatus("Daily limit reached.");
     },
-    canCountProgress: () => isFeedRoute(window.location.href) && !isDetailRoute(window.location.href)
+    onError: (message) => {
+      setStatus(message);
+      if (engine === localEngine && !localEngine.getViewState()?.focusedHandle) {
+        overlayRef.setPromptVisible(true);
+        setFeedLocked(true, true);
+      }
+    },
+    canCountProgress: () => engine === localEngine && isFeedRoute(window.location.href) && siteSettings?.enabled === true && !isFollowingFeedBypassActive()
   });
 
-  engine.subscribe((view) => {
+  engine = localEngine;
+  localEngine.subscribe((view) => {
+    if (engine !== localEngine) {
+      return;
+    }
+    const focused = view.focusedHandle;
+    if (focused && view.snapshot.pendingPresentations?.some((pending) =>
+      pending.progressKey === (adapter.getProgressKey ? adapter.getProgressKey(focused) : focused.id))) {
+      recoveredPresentationPostId = focused.id;
+    }
     overlayRef.setView(view);
     applyFocusLayer(view);
   });
@@ -1530,9 +1568,9 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
   let announcedWait = false;
   let attempts = 0;
 
-  while (Date.now() < startDeadline) {
+  while (Date.now() < startDeadline && isCurrent() && engine === localEngine && !isFollowingFeedBypassActive()) {
     attempts += 1;
-    started = await engine.start(nextConfig, resumeForAdapter);
+    started = await localEngine.start(nextConfig, resumeForAdapter);
     if (started) {
       break;
     }
@@ -1554,6 +1592,14 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
     await wait(140);
   }
 
+  if (!isCurrent() || isFollowingFeedBypassActive()) {
+    await localEngine.dispose();
+    if (engine === localEngine) {
+      engine = null;
+    }
+    return false;
+  }
+
   if (!started) {
     engine = null;
     overlayRef.setView(null);
@@ -1570,15 +1616,18 @@ async function startSession(overrides: Partial<SessionConfig> = {}, resumeSnapsh
     return false;
   }
 
-  overlayRef.setPromptVisible(false);
+  overlayRef.setPromptVisible(localEngine.getPhase() === "paused" && localEngine.getPauseReason() === "manual" &&
+    !localEngine.getViewState()?.focusedHandle);
   overlayRef.setPromptPostLimitCap(null);
-  installSessionKeyboardShortcuts();
+  if (engine === localEngine && localEngine.getPhase() === "active") {
+    installSessionKeyboardShortcuts();
+  }
 
   return true;
 }
 
-async function finishPostLimitSession(): Promise<void> {
-  if (!engine) {
+async function finishPostLimitSession(completedEngine: DeckEngine): Promise<void> {
+  if (engine !== completedEngine) {
     return;
   }
 
@@ -1587,8 +1636,12 @@ async function finishPostLimitSession(): Promise<void> {
   clearSessionKeyboardShortcuts();
 
   await currentEngine.stop("manual");
-  if (engine === currentEngine) {
-    engine = null;
+  if (engine !== currentEngine) {
+    return;
+  }
+  engine = null;
+  if (!isFeedRoute(window.location.href)) {
+    return;
   }
 
   clearFocusLayer();
@@ -1597,17 +1650,21 @@ async function finishPostLimitSession(): Promise<void> {
   enablePostLimitExploreMode(viewedProgressKeys);
   clearResumeRecoveryTimers();
   overlay?.setView(null);
-  overlay?.setDailyLimitReached(false);
   overlay?.setPromptVisible(false);
+  await refreshDailyContext();
   setStatus("Post target reached. Session ended.", 2200);
 }
 
 async function stopSession(): Promise<void> {
+  recoveredPresentationPostId = null;
+  startGeneration += 1;
+  promptGeneration += 1;
   clearSessionKeyboardShortcuts();
 
   if (engine) {
-    await engine.stop("manual");
+    const currentEngine = engine;
     engine = null;
+    await currentEngine.stop("manual");
   }
 
   clearFocusLayer();
@@ -1622,14 +1679,14 @@ async function stopSession(): Promise<void> {
 
 async function moveNext(): Promise<void> {
   const moved = await engine?.next();
-  if (!moved) {
+  if (!moved && engine?.getPhase() === "active") {
     setStatus("No next post yet.");
   }
 }
 
 async function movePrevious(): Promise<void> {
   const moved = await engine?.previous();
-  if (!moved) {
+  if (!moved && engine?.getPhase() === "active") {
     setStatus("No previous post.");
   }
 }
@@ -1714,11 +1771,16 @@ async function resumeFromRoutePrompt(): Promise<void> {
     return;
   }
 
-  await engine.resume();
-  const restored = engine.restoreFocus(view?.snapshot.focusedPostId ?? null, false);
+  const currentEngine = engine;
+  await currentEngine.resume();
+  const restored = await currentEngine.restoreFocus(view?.snapshot.focusedPostId ?? null, false);
   if (!restored) {
-    engine.focusNearestToViewportCenter(true, false);
+    await currentEngine.focusNearestToViewportCenter(true);
   }
+  if (engine !== currentEngine) {
+    return;
+  }
+  installSessionKeyboardShortcuts();
   scheduleResumeFocusRecovery();
 
   setStatus("Resumed session.", 2000);
@@ -1796,6 +1858,16 @@ async function handleRouteChange(): Promise<void> {
   const nowFeed = isFeedRoute(nextRoute);
   const nowDetail = isDetailRoute(nextRoute);
   lastRoute = nextRoute;
+  routeGeneration += 1;
+  startGeneration += 1;
+  promptGeneration += 1;
+  if (!nowFeed) {
+    recoveredPresentationPostId = null;
+    hideOverlaySessionUi();
+    clearSessionKeyboardShortcuts();
+    clearFocusLayer();
+    setFeedLocked(false);
+  }
   setAdUnitsHidden(true);
   setDistractingUiHidden(shouldHideDistractingElements(), true);
 
@@ -1809,6 +1881,7 @@ async function handleRouteChange(): Promise<void> {
     }
 
     if (nowFeed) {
+      await refreshDailyContext();
       setAuxiliaryUiHidden(true);
       await maybeShowPrompt();
     } else {
@@ -1819,7 +1892,13 @@ async function handleRouteChange(): Promise<void> {
     return;
   }
 
-  const phase = engine.getPhase();
+  if (nowFeed) {
+    await refreshDailyContext();
+  }
+  const phase = engine?.getPhase();
+  if (!engine) {
+    return;
+  }
   if (phase === "active" && nowDetail) {
     await engine.pause("details");
     setStatus("Paused (viewing details).", 1800);
@@ -1847,7 +1926,7 @@ async function handleRouteChange(): Promise<void> {
   }
 
   if (phase === "active" && wasFeed && nowFeed) {
-    engine.focusNearestToViewportCenter(false, false);
+    await engine.focusNearestToViewportCenter(false);
     setAuxiliaryUiHidden(true);
     setFeedLocked(false);
     return;
@@ -1925,10 +2004,75 @@ function registerMessageHandlers(): void {
   });
 }
 
+async function refreshDailyContext(): Promise<void> {
+  if (!adapter) {
+    return;
+  }
+  const generation = ++dailyRefreshGeneration;
+  const context = await getDailyContext();
+  if (generation !== dailyRefreshGeneration) {
+    return;
+  }
+  engine?.setDailyContext(context.limits, context.usage);
+  if (!isFeedRoute(window.location.href) || isFollowingFeedBypassActive() || !siteSettings?.enabled) {
+    overlay?.setDailyLimitReached(false);
+    return;
+  }
+  const reached = isDailyLimitReached(context.limits, context.usage, adapter.id);
+  if (reached) {
+    overlay?.setPromptVisible(false);
+    showDailyLimitModal(context.usage);
+    if (!engine && !postLimitExploreMode) {
+      setFeedLocked(true, true);
+    }
+  } else {
+    overlay?.setDailyLimitReached(false);
+    if (engine) {
+      await syncFollowingFeedBypassState();
+      const view = engine?.getViewState();
+      if (view?.snapshot.phase === "paused" && view.snapshot.pauseReason === "limit") {
+        await resumeFromRoutePrompt();
+      }
+      applyFocusLayer(engine?.getViewState() ?? null);
+    } else {
+      await maybeShowPrompt();
+    }
+  }
+}
+
+function registerDailyRefresh(): void {
+  const scheduleMidnight = () => {
+    if (midnightTimerId !== null) {
+      window.clearTimeout(midnightTimerId);
+    }
+    midnightTimerId = window.setTimeout(() => {
+      void refreshDailyContext().finally(scheduleMidnight);
+    }, millisecondsUntilMidnight());
+  };
+  scheduleMidnight();
+  const onActivation = () => {
+    if (document.visibilityState === "visible") {
+      scheduleMidnight();
+      void refreshDailyContext();
+    }
+  };
+  document.addEventListener("visibilitychange", onActivation);
+  window.addEventListener("focus", onActivation);
+  window.addEventListener("pageshow", (event) => {
+    if (event.persisted) {
+      void engine?.reconcileOwnership().then(() => refreshDailyContext());
+    }
+  });
+}
+
 function registerStorageWatchers(): void {
   browserApi.storage.onChanged.addListener((changes, areaName) => {
     if (areaName !== "local") {
       return;
+    }
+
+    if (changes[STORAGE_KEYS.dailyLimits] || changes[STORAGE_KEYS.dailyUsage]) {
+      void refreshDailyContext();
     }
 
     const sessionConfigChange = changes[STORAGE_KEYS.sessionConfig];
@@ -1943,6 +2087,7 @@ function registerStorageWatchers(): void {
 
     void (async () => {
       siteSettings = await getSiteSettings(adapter.id);
+      promptGeneration += 1;
       setDistractingUiHidden(shouldHideDistractingElements(), true);
 
       if (await syncFollowingFeedBypassState()) {
@@ -1955,6 +2100,7 @@ function registerStorageWatchers(): void {
 
       if (!isFeedRoute(window.location.href)) {
         overlay?.setPromptVisible(false);
+        overlay?.setDailyLimitReached(false);
         setAuxiliaryUiHidden(false);
         setFeedLocked(false);
         return;
@@ -1962,6 +2108,7 @@ function registerStorageWatchers(): void {
 
       if (!siteSettings.enabled) {
         overlay?.setPromptVisible(false);
+        overlay?.setDailyLimitReached(false);
         setAuxiliaryUiHidden(false);
         setFeedLocked(false);
         return;
@@ -1977,14 +2124,14 @@ async function maybeResumeSession(): Promise<void> {
     return;
   }
 
-  const snapshot = await getSessionSnapshot();
+  const snapshot = await claimSessionSnapshot(adapter!.id);
   if (!snapshot || snapshot.adapterId !== adapter.id) {
     await maybeShowPrompt();
     return;
   }
 
   if (!isStoredSnapshotResumable(snapshot)) {
-    await clearSessionSnapshot();
+    await clearOwnedSessionSnapshot();
     await maybeShowPrompt();
     return;
   }
@@ -2015,6 +2162,7 @@ async function bootstrap(): Promise<void> {
   registerBlockedPostInteractionGuard();
   registerVideoPlaybackStabilityGuard();
   registerStorageWatchers();
+  registerDailyRefresh();
   wrapHistoryRouting();
   registerRouteFallbackWatcher();
   registerMessageHandlers();

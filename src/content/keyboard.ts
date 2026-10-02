@@ -1,6 +1,7 @@
 import { KEY_BINDINGS } from "@/shared/constants";
 
 export interface KeyboardHandlers {
+  isActive?: () => boolean;
   onNext: () => void;
   onPrevious: () => void;
   onBookmark: () => void;
@@ -19,6 +20,9 @@ function isEditable(target: EventTarget | null): boolean {
 
 export function installKeyboardShortcuts(handlers: KeyboardHandlers): () => void {
   const onKeyDown = (event: KeyboardEvent) => {
+    if (handlers.isActive?.() === false) {
+      return;
+    }
     // Events from the overlay's shadow root are retargeted to its host, so read the real origin.
     const origin = event.composedPath()[0] ?? event.target;
     if (isEditable(origin) || event.metaKey || event.ctrlKey || event.altKey) {
