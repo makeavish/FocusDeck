@@ -176,6 +176,10 @@ export class OverlayController {
     this.render();
   }
 
+  isPromptOrDailyLimitVisible(): boolean {
+    return this.state.prompt.visible || this.state.dailyLimitReached;
+  }
+
   setDailyLimitContext(context: { postsToday: number | null; siteLabel: string }): void {
     this.state.dailyLimitContext = context;
     this.render();
