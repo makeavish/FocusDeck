@@ -54,7 +54,7 @@ Click the toolbar icon to open Settings:
 
 ## What's new
 
-### Unreleased
+### 1.0.0
 
 - Redesigned session prompt, daily-limit dialog, session counter, and Settings page, with light and dark themes.
 - Session and daily-limit dialogs work from the keyboard and are announced to screen readers.
@@ -63,6 +63,7 @@ Click the toolbar icon to open Settings:
 - Closed gaps that let unseen posts show without counting: video playback, resuming, recycled posts, and returning from Following.
 - Sessions in one tab no longer resume, overwrite, or clear another open tab's session.
 - Save no longer removes an existing bookmark.
+- After FocusDeck updates, open X tabs go back to normal instead of staying locked until you reload them.
 
 ### 0.3.0
 
@@ -121,7 +122,7 @@ npm run release:firefox
 **Outputs:**
 
 - `dist/firefox/manifest.json` and `dist/firefox/content.js`
-- `release/focusdeck-firefox-v0.3.0.zip` with `npm run pack:firefox`
-- `release/focusdeck-source-v0.3.0.zip` with `npm run pack:source` or `npm run pack`
+- `release/focusdeck-firefox-v1.0.0.zip` with `npm run pack:firefox`
+- `release/focusdeck-source-v1.0.0.zip` with `npm run pack:source` or `npm run pack`
 
 All source is human-readable (`.ts`, `.html`, `.css`). Minified files are generated only in `dist/` during the build.
