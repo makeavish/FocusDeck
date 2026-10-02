@@ -99,6 +99,7 @@ vi.mock("@/content/overlay/overlay", () => ({ OverlayController: class {
   setView(view: DeckViewState | null) { this.view = view; }
   setPromptVisible(visible: boolean) { this.prompt = visible; this.syncBlocking(); }
   setDailyLimitReached(visible: boolean) { if (visible) state.dailyModalShows += 1; this.daily = visible; this.syncBlocking(); }
+  isPromptOrDailyLimitVisible() { return this.prompt || this.daily; }
   syncBlocking() { this.callbacks.onBlockingModalVisibilityChange(this.prompt || this.daily); }
   setThemeMode() {}
   setStatus(message: string | null) { this.status = message; }
@@ -562,6 +563,36 @@ describe("content runtime gating and route reconciliation", () => {
     await settle();
     expect(state.overlay?.daily).toBe(true);
     expect(state.context.usage.global.postsViewed).toBe(1);
+  });
+
+  it("shows the session prompt when switching from Following to For You without a session", async () => {
+    const tab = new FixtureElement(); tab.tagName = "DIV"; tab.setAttribute("role", "tab");
+    state.following = true;
+    mutation(tab as unknown as HTMLElement);
+    await vi.advanceTimersByTimeAsync(16); await settle();
+    expect(state.overlay?.prompt).toBe(false);
+    expect(state.items.some((item) => item.element.hasAttribute("data-focusdeck-locked"))).toBe(false);
+    state.following = false;
+    mutation(tab as unknown as HTMLElement);
+    await vi.advanceTimersByTimeAsync(16); await settle();
+    expect(state.overlay?.prompt).toBe(true);
+    expect(state.items.every((item) => item.element.getAttribute("data-focusdeck-locked") === "true")).toBe(true);
+    await start();
+    expect(state.overlay?.view?.snapshot.phase).toBe("active");
+  });
+
+  it("shows the daily-limit dialog when switching from Following to For You at the limit", async () => {
+    const tab = new FixtureElement(); tab.tagName = "DIV"; tab.setAttribute("role", "tab");
+    state.following = true;
+    mutation(tab as unknown as HTMLElement);
+    await vi.advanceTimersByTimeAsync(16); await settle();
+    state.context.usage.global.postsViewed = 100;
+    state.following = false;
+    mutation(tab as unknown as HTMLElement);
+    await vi.advanceTimersByTimeAsync(16); await settle();
+    expect(state.overlay?.daily).toBe(true);
+    expect(state.overlay?.prompt).toBe(false);
+    expect(state.items.every((item) => item.element.getAttribute("data-focusdeck-locked") === "true")).toBe(true);
   });
 
   it("uses exactly one feed pass for multiple same-frame card updates", async () => {

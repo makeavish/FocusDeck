@@ -1022,7 +1022,8 @@ function scheduleIdleRouteSync(): void {
         return;
       }
 
-      if (!feedLocked) {
+      // Re-entering a managed feed (for example, back from Following) locks it first, so check the prompt, not the lock.
+      if (!overlay?.isPromptOrDailyLimitVisible()) {
         await maybeShowPrompt();
       }
     } finally {
