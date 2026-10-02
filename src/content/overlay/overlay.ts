@@ -4,6 +4,15 @@ import type { SessionConfig, ThemeMode } from "@/types/session";
 import { OVERLAY_HOST_ID, OVERLAY_Z_INDEX } from "@/shared/constants";
 import overlayStyles from "@/content/overlay/styles.css?inline";
 
+// The FocusDeck mark on a 16px grid, matching src/icons/icon-toolbar.svg.
+const BRAND_MARK_SHAPES = [
+  { x: 0, y: 0, width: 16, height: 16, rx: 3.5, className: "fd-brand-mark-tile" },
+  { x: 5, y: 3, width: 8, height: 7, rx: 1.5, className: "fd-brand-mark-back" },
+  { x: 3, y: 6, width: 8, height: 7, rx: 1.5, className: "fd-brand-mark-card" },
+  { x: 5, y: 8, width: 4, height: 1, rx: 0.5, className: "fd-brand-mark-line" },
+  { x: 5, y: 10, width: 2.5, height: 1, rx: 0.5, className: "fd-brand-mark-line" }
+];
+
 export interface OverlayCallbacks {
   onStartSession: (partial: Partial<SessionConfig>) => void;
   onAction: (action: AdapterAction) => void;
@@ -621,33 +630,21 @@ export class OverlayController {
 
     const svgNs = "http://www.w3.org/2000/svg";
     const mark = document.createElementNS(svgNs, "svg");
-    mark.setAttribute("viewBox", "0 0 20 20");
+    mark.setAttribute("viewBox", "0 0 16 16");
     mark.setAttribute("aria-hidden", "true");
     mark.classList.add("fd-brand-mark");
 
-    const rect = (x: string, y: string, className?: string) => {
+    for (const shape of BRAND_MARK_SHAPES) {
       const node = document.createElementNS(svgNs, "rect");
-      node.setAttribute("x", x);
-      node.setAttribute("y", y);
-      node.setAttribute("width", "13");
-      node.setAttribute("height", "11");
-      node.setAttribute("rx", "2.5");
-      if (className) {
-        node.classList.add(className);
-      }
-      return node;
-    };
+      node.setAttribute("x", String(shape.x));
+      node.setAttribute("y", String(shape.y));
+      node.setAttribute("width", String(shape.width));
+      node.setAttribute("height", String(shape.height));
+      node.setAttribute("rx", String(shape.rx));
+      node.classList.add(shape.className);
+      mark.append(node);
+    }
 
-    const back = rect("5", "2", "fd-brand-mark-back");
-    const front = rect("2", "7");
-
-    const dot = document.createElementNS(svgNs, "circle");
-    dot.setAttribute("cx", "8.5");
-    dot.setAttribute("cy", "12.5");
-    dot.setAttribute("r", "2.25");
-    dot.classList.add("fd-brand-mark-dot");
-
-    mark.append(back, front, dot);
     brand.append(mark, "FocusDeck");
     return brand;
   }

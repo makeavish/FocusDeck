@@ -256,18 +256,25 @@ input {
   color: var(--fd-muted);
 }
 
+/* Brand colors stay fixed across themes, like the toolbar icon. */
 .fd-brand-mark {
   width: 18px;
   height: 18px;
-  fill: var(--fd-accent);
+  flex: none;
+}
+
+.fd-brand-mark-tile,
+.fd-brand-mark-line {
+  fill: #3346d3;
+}
+
+.fd-brand-mark-card {
+  fill: #ffffff;
 }
 
 .fd-brand-mark-back {
-  opacity: 0.45;
-}
-
-.fd-brand-mark-dot {
-  fill: var(--fd-surface);
+  fill: #ffffff;
+  fill-opacity: 0.5;
 }
 
 .fd-modal-title {
