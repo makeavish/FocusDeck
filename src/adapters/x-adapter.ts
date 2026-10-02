@@ -1,13 +1,13 @@
+import { hasXFeedMutation, isXAdUnit, X_CARD_SELECTOR, X_FEED_MUTATION_ATTRIBUTES } from "./x-dom";
 import type { ActionResult, Adapter, MediaItem, PostHandle, PostMeta, QuotedPostMeta } from "@/types/adapter";
 
 const PRIMARY_CARD_SELECTOR = "article[data-testid='tweet']";
-const FALLBACK_CARD_SELECTOR = "article[role='article']";
 const QUOTE_SELECTOR = "[data-testid='quoteTweet']";
-const FEED_STRUCTURE_MUTATION_SELECTOR =
-  "article[data-testid='tweet'], article[role='article'], [data-testid='cellInnerDiv'], [data-testid='placementTracking'], [data-testid='primaryColumn']";
 const MEDIA_CONTAINER_SELECTOR =
   "[data-testid='tweetPhoto'], [data-testid='videoComponent'], [data-testid='videoPlayer'], [data-testid='card.wrapper'], [data-testid*='video'], a[href*='/video/']";
 const HANDLE_ATTR = "data-focusdeck-id";
+const fallbackIdentities = new WeakMap<HTMLElement, { fingerprint: string; id: string }>();
+let nextFallbackId = 0;
 
 function textFrom(node: Element | null): string {
   return node?.textContent?.trim().replace(/\s+/g, " ") ?? "";
@@ -129,7 +129,7 @@ function openUrl(url: string): ActionResult {
 }
 
 function owningTweet(node: Element): HTMLElement | null {
-  return node.closest<HTMLElement>(PRIMARY_CARD_SELECTOR);
+  return node.closest<HTMLElement>(X_CARD_SELECTOR);
 }
 
 function belongsToTweet(node: Element, tweetRoot: HTMLElement): boolean {
@@ -175,7 +175,8 @@ function getStatusLink(scope: ParentNode, tweetRoot?: HTMLElement, preferPrimary
       ? links.filter((link) => !isInsideSecondary(tweetRoot, link))
       : links;
 
-  const timeLink = preferredLinks.find((link) => link.querySelector("time")) ?? links.find((link) => link.querySelector("time"));
+  const candidates = preferredLinks.length ? preferredLinks : links;
+  const timeLink = candidates.find((link) => link.querySelector("time"));
   if (timeLink) {
     return timeLink;
   }
@@ -184,7 +185,7 @@ function getStatusLink(scope: ParentNode, tweetRoot?: HTMLElement, preferPrimary
     return preferredLinks[0];
   }
 
-  return timeLink ?? links[0] ?? null;
+  return candidates[0] ?? null;
 }
 
 function collectPermalinkLinkCandidates(scope: ParentNode, tweetRoot?: HTMLElement, preferPrimary = false): HTMLAnchorElement[] {
@@ -193,9 +194,8 @@ function collectPermalinkLinkCandidates(scope: ParentNode, tweetRoot?: HTMLEleme
     preferPrimary && tweetRoot
       ? links.filter((link) => !isInsideSecondary(tweetRoot, link))
       : links;
-  const timeLinks = preferredLinks.filter((link) => Boolean(link.querySelector("time")));
-
-  return Array.from(new Set([...timeLinks, ...preferredLinks, ...links]));
+  const primaryPermalinks = preferredLinks.filter((link) => normalizeXStatusPermalink(link.href));
+  return preferPrimary && primaryPermalinks.length ? primaryPermalinks : links;
 }
 
 function resolvePermalinkFromScope(scope: ParentNode, tweetRoot?: HTMLElement, preferPrimary = false): string | undefined {
@@ -836,46 +836,37 @@ function isExternalCandidate(url: string): boolean {
   return false;
 }
 
-function createHandleId(element: HTMLElement, index: number): string {
+function createHandleId(element: HTMLElement, _index: number): string {
   const permalink = resolvePermalinkFromScope(element, element, true);
   const statusId = getStatusIdFromUrl(permalink);
   const canonical = statusId ? `x-status-${statusId}` : permalink;
 
   if (canonical) {
-    element.setAttribute(HANDLE_ATTR, canonical);
+    fallbackIdentities.delete(element);
+    if (element.getAttribute(HANDLE_ATTR) !== canonical) {
+      element.setAttribute(HANDLE_ATTR, canonical);
+    }
     return canonical;
   }
 
-  const existing = element.getAttribute(HANDLE_ATTR);
-  if (existing) {
-    return existing;
+  const fingerprint = [
+    textFrom(element.querySelector("[data-testid='tweetText']")),
+    textFrom(element.querySelector("[data-testid='User-Name']")),
+    element.querySelector("time")?.getAttribute("datetime") ?? ""
+  ].join("\n");
+  const existing = fallbackIdentities.get(element);
+  if (existing?.fingerprint === fingerprint) {
+    return existing.id;
   }
-
-  const generated = `x-${Date.now()}-${index}`;
+  nextFallbackId += 1;
+  const generated = `x-${Date.now()}-${nextFallbackId}`;
+  fallbackIdentities.set(element, { fingerprint, id: generated });
   element.setAttribute(HANDLE_ATTR, generated);
   return generated;
 }
 
 function isPromotedTweet(root: HTMLElement): boolean {
-  const promotedNode = Array.from(root.querySelectorAll<HTMLElement>("span, div")).find((node) => {
-    const text = node.textContent?.trim() ?? "";
-    return /^Promoted$/i.test(text) || /^Ad$/i.test(text);
-  });
-
-  return Boolean(promotedNode);
-}
-
-function isReplyTweet(root: HTMLElement): boolean {
-  const markers = getScopedElements<HTMLElement>(root, "span, a, div[dir='ltr']", root).filter(
-    (node) => !isInsideSecondary(root, node)
-  );
-
-  const joined = markers
-    .map((node) => node.textContent?.trim() ?? "")
-    .filter(Boolean)
-    .join(" ");
-
-  return /\bReplying to\b/i.test(joined);
+  return isXAdUnit(root);
 }
 
 function isLikelyFeedPost(root: HTMLElement): boolean {
@@ -961,32 +952,6 @@ function isDetailPath(pathname: string): boolean {
   return pathname.includes("/status/") || pathname.includes("/photo/") || pathname.includes("/video/");
 }
 
-function touchesFeedStructure(node: Node): boolean {
-  if (!(node instanceof Element)) {
-    return false;
-  }
-
-  return node.matches(FEED_STRUCTURE_MUTATION_SELECTOR) || Boolean(node.querySelector(FEED_STRUCTURE_MUTATION_SELECTOR));
-}
-
-function hasFeedStructureMutation(records: MutationRecord[]): boolean {
-  for (const record of records) {
-    for (const node of record.addedNodes) {
-      if (touchesFeedStructure(node)) {
-        return true;
-      }
-    }
-
-    for (const node of record.removedNodes) {
-      if (touchesFeedStructure(node)) {
-        return true;
-      }
-    }
-  }
-
-  return false;
-}
-
 export class XAdapter implements Adapter {
   readonly id = "x";
   readonly name = "X / Twitter";
@@ -1036,19 +1001,20 @@ export class XAdapter implements Adapter {
     return handles.find((item) => item.id === id) ?? null;
   }
 
+  getHandleId(element: HTMLElement): string {
+    return createHandleId(element, 0);
+  }
+
   getProgressKey(handle: PostHandle): string | null {
     if (isPromotedTweet(handle.element)) {
       return null;
     }
 
-    const permalink = resolvePermalinkFromScope(handle.element, handle.element, true);
+    const root = handle.element;
+    const permalink = resolvePermalinkFromScope(root, root, true);
     const statusId = getStatusIdFromUrl(permalink);
     if (statusId) {
       return statusId;
-    }
-
-    if (isReplyTweet(handle.element)) {
-      return null;
     }
 
     return handle.id;
@@ -1059,11 +1025,10 @@ export class XAdapter implements Adapter {
   }
 
   getFeedItems(): PostHandle[] {
-    const primaryNodes = [...document.querySelectorAll<HTMLElement>(PRIMARY_CARD_SELECTOR)];
-    const sourceNodes = primaryNodes.length ? primaryNodes : [...document.querySelectorAll<HTMLElement>(FALLBACK_CARD_SELECTOR)];
+    const sourceNodes = [...document.querySelectorAll<HTMLElement>(X_CARD_SELECTOR)];
 
     const nodes = sourceNodes.filter((element) => {
-      if (element.parentElement?.closest(PRIMARY_CARD_SELECTOR)) {
+      if (element.closest(QUOTE_SELECTOR) || element.parentElement?.closest(X_CARD_SELECTOR)) {
         return false;
       }
 
@@ -1078,17 +1043,11 @@ export class XAdapter implements Adapter {
       return isLikelyFeedPost(element);
     });
 
-    const seen = new Set<string>();
     const handles: PostHandle[] = [];
 
     nodes.forEach((element, index) => {
       const id = createHandleId(element, index);
 
-      if (seen.has(id)) {
-        return;
-      }
-
-      seen.add(id);
       handles.push({ id, element });
     });
 
@@ -1139,7 +1098,7 @@ export class XAdapter implements Adapter {
     return resolvePermalinkFromScope(handle.element, handle.element, true) ?? null;
   }
 
-  async notInterested(handle: PostHandle): Promise<ActionResult> {
+  async notInterested(handle: PostHandle, isCurrent: () => boolean = () => true): Promise<ActionResult> {
     const caretButton =
       handle.element.querySelector<HTMLElement>("button[data-testid='caret']") ??
       handle.element.querySelector<HTMLElement>("button[aria-label*='More']");
@@ -1148,9 +1107,13 @@ export class XAdapter implements Adapter {
       return { ok: false, message: "Unable to locate the post menu." };
     }
 
+    const permalink = this.getPermalink(handle);
+    const canExecute = () => isCurrent() && handle.element.isConnected && this.getPermalink(handle) === permalink;
+    if (!canExecute()) return { ok: false, message: "Post or session changed. Try again." };
     caretButton.click();
 
     const target = await waitForMenuItem();
+    if (!canExecute()) return { ok: false, message: "Post or session changed. Try again." };
     if (!target) {
       return {
         ok: false,
@@ -1167,9 +1130,16 @@ export class XAdapter implements Adapter {
   }
 
   bookmark(handle: PostHandle): ActionResult {
+    const buttons = getScopedElements<HTMLElement>(handle.element, "button", handle.element)
+      .filter((button) => !isInsideSecondary(handle.element, button));
+    const isRemoval = (button: HTMLElement) => /^(removeBookmark|unbookmark)$/i.test(button.dataset.testid ?? "") ||
+      /remove.*bookmark|unbookmark/i.test(button.getAttribute("aria-label") ?? "");
+    if (buttons.some(isRemoval)) {
+      return { ok: true, message: "Post already bookmarked." };
+    }
     const bookmarkButton =
-      handle.element.querySelector<HTMLElement>("button[data-testid='bookmark']") ??
-      handle.element.querySelector<HTMLElement>("button[aria-label*='Bookmark']");
+      buttons.find((button) => button.dataset.testid === "bookmark") ??
+      buttons.find((button) => !isRemoval(button) && /bookmark/i.test(button.getAttribute("aria-label") ?? ""));
 
     if (!bookmarkButton) {
       return { ok: false, message: this.assistMissingBookmark(handle) };
@@ -1226,11 +1196,11 @@ export class XAdapter implements Adapter {
   }
 
   observeFeedChanges(onChange: () => void): () => void {
-    const target = document.querySelector("main") ?? document.body;
+    const target = document.documentElement;
     let rafId = 0;
 
     const observer = new MutationObserver((records) => {
-      if (!hasFeedStructureMutation(records)) {
+      if (!hasXFeedMutation(records)) {
         return;
       }
 
@@ -1244,7 +1214,7 @@ export class XAdapter implements Adapter {
       });
     });
 
-    observer.observe(target, { childList: true, subtree: true });
+    observer.observe(target, { childList: true, subtree: true, characterData: true, attributes: true, attributeFilter: X_FEED_MUTATION_ATTRIBUTES });
 
     return () => {
       observer.disconnect();

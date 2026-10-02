@@ -1,6 +1,6 @@
 # FocusDeck Privacy Policy
 
-Last updated: 2026-03-12
+Last updated: 2026-10-02
 
 FocusDeck is designed to run locally in your browser.
 
@@ -9,11 +9,14 @@ FocusDeck is designed to run locally in your browser.
 FocusDeck stores the following locally in your browser:
 
 - Session config (post limit, theme preference)
-- Session snapshot (for automatic route pause/resume and focus restoration)
+- Session snapshots, for pause/resume and resuming after a tab closes
+- A temporary link between each open tab and its session, kept in session storage and cleared when the browser closes
 - Daily limits (total daily post limit)
 - Daily usage counters (posts viewed)
 - Site settings used internally for adapter behavior defaults (for example distraction hiding and Following-tab bypass preference)
 - A small settings-page theme cache in `localStorage` so the options page can paint with the last-selected theme immediately
+
+FocusDeck reads which tab IDs are open only to tell whether a saved session's tab has closed. It doesn't read or store tab URLs, titles, or history.
 
 ## What FocusDeck does not collect
 

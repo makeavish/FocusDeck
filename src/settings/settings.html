@@ -8,114 +8,110 @@
     <link rel="stylesheet" href="./settings.css" />
   </head>
   <body>
-    <main class="settings-shell">
-      <aside class="settings-nav">
-        <div class="brand">
-          <img class="brand-icon" src="../icons/icon-128.png" alt="FocusDeck" width="44" height="44" />
-          <div class="brand-copy">
-            <h1>FocusDeck</h1>
-            <p>Settings Dashboard</p>
-          </div>
+    <div class="page">
+      <header class="masthead">
+        <img class="brand-icon" src="../icons/icon-128.png" alt="" width="40" height="40" />
+        <div>
+          <h1>FocusDeck</h1>
+          <p>Settings for X. Everything stays on this device.</p>
         </div>
+      </header>
 
-        <nav class="nav-list" aria-label="Settings Sections">
-          <button type="button" class="nav-item nav-item-active" data-tab="general">General</button>
-          <button type="button" class="nav-item" data-tab="limits">Limits</button>
-        </nav>
-
-        <p class="nav-note">Local-only settings. No cloud sync.</p>
-      </aside>
-
-      <section class="settings-content">
-        <header class="content-header">
-          <p class="eyebrow">FOCUSDECK SETTINGS</p>
-          <h2 id="panelTitle">General</h2>
-          <p id="panelDescription" class="subcopy">Theme and baseline behavior for FocusDeck overlays.</p>
-        </header>
-
-        <section id="panel-general" class="panel">
-          <article class="card">
-            <h3>Theme</h3>
-            <p>Choose how FocusDeck controls render over feed pages.</p>
-            <div class="segmented" role="radiogroup" aria-label="Theme mode">
-              <label class="seg-option">
-                <input type="radio" name="themeMode" value="system" checked />
-                <span>System</span>
+      <main class="sections">
+        <section class="section" aria-labelledby="limitHeading">
+          <h2 id="limitHeading">Daily limit</h2>
+          <div class="group limit-group">
+            <div class="limit">
+              <label class="limit-field">
+                <input id="sharedDailyLimit" type="number" min="0" step="1" value="100" inputmode="numeric" aria-describedby="limitHint" />
+                <span>posts a day</span>
               </label>
-              <label class="seg-option">
-                <input type="radio" name="themeMode" value="light" />
-                <span>Light mode</span>
-              </label>
-              <label class="seg-option">
-                <input type="radio" name="themeMode" value="dark" />
-                <span>Dark mode</span>
-              </label>
+              <p id="limitHint" class="hint">Counts across all sessions and resets at midnight. Set to 0 for no limit.</p>
             </div>
-          </article>
-
-          <article class="card">
-            <h3>Distraction Filter</h3>
-            <p>Hide distracting X/Twitter chrome across all pages. Keeps the right-side Search visible while removing the rest of the rail plus left-nav Explore, Follow, and Premium.</p>
-            <label class="toggle-row" for="hideDistractingElements">
-              <span class="toggle-copy">
-                <strong>Hide distracting elements</strong>
-                <small>Applies on X/Twitter pages immediately after you save.</small>
-              </span>
-              <span class="toggle-control">
-                <input id="hideDistractingElements" type="checkbox" />
-                <span class="toggle-track" aria-hidden="true"></span>
-              </span>
-            </label>
-          </article>
-
-          <article class="card">
-            <h3>Following Feed</h3>
-            <p>Choose whether FocusDeck should step aside on X's Following tab while keeping the rest of your feed controls intact.</p>
-            <label class="toggle-row" for="bypassFollowingFeed">
-              <span class="toggle-copy">
-                <strong>Bypass FocusDeck on Following</strong>
-                <small>When enabled, X's Following tab scrolls freely and does not count toward session or daily post limits.</small>
-              </span>
-              <span class="toggle-control">
-                <input id="bypassFollowingFeed" type="checkbox" />
-                <span class="toggle-track" aria-hidden="true"></span>
-              </span>
-            </label>
-          </article>
-
-          <article class="card">
-            <h3>Session Data</h3>
-            <p>Clear unfinished state if a feed tab was closed while a session was active.</p>
-            <div class="actions">
-              <button id="clearSnapshot" type="button">Clear unfinished session</button>
+            <div class="usage">
+              <div class="meter" aria-hidden="true"><span id="usageMeter"></span></div>
+              <div class="usage-row">
+                <p id="usageSummary">Loading today's count…</p>
+                <button id="clearDailyUsage" type="button" class="btn btn-quiet btn-small">Reset today's count</button>
+              </div>
             </div>
-          </article>
-        </section>
-
-        <section id="panel-limits" class="panel is-hidden">
-          <article class="card">
-            <h3>Total Daily Limit</h3>
-            <p>Total daily post limit across all sessions. Resets at 12:00 AM browser local time. Set to 0 to disable.</p>
-            <label class="field">
-              <span>Total daily post limit</span>
-              <input id="sharedDailyLimit" type="number" min="0" step="1" value="100" />
-            </label>
-            <p id="usageSummary" class="muted">Loading usage...</p>
-            <div class="actions">
-              <button id="clearDailyUsage" type="button">Reset today's usage</button>
-            </div>
-          </article>
-        </section>
-
-        <footer class="footer">
-          <p id="status" class="status">Ready</p>
-          <div class="footer-actions">
-            <button id="resetDefaults" type="button">Reset defaults</button>
-            <button id="applyChanges" class="primary" type="button">Apply changes</button>
           </div>
-        </footer>
-      </section>
-    </main>
+        </section>
+
+        <section class="section" aria-labelledby="feedHeading">
+          <h2 id="feedHeading">Feed</h2>
+          <div class="group">
+            <label class="row" for="hideDistractingElements">
+              <span class="row-copy">
+                <strong>Hide distractions</strong>
+                <small>Hides the right sidebar (Search stays) and Explore, Follow, and Premium in the left menu.</small>
+              </span>
+              <span class="switch">
+                <input id="hideDistractingElements" type="checkbox" role="switch" />
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+            <label class="row" for="bypassFollowingFeed">
+              <span class="row-copy">
+                <strong>Let Following scroll freely</strong>
+                <small>The Following tab skips sessions and doesn't count toward your limits.</small>
+              </span>
+              <span class="switch">
+                <input id="bypassFollowingFeed" type="checkbox" role="switch" />
+                <span class="switch-track" aria-hidden="true"></span>
+              </span>
+            </label>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="appearanceHeading">
+          <h2 id="appearanceHeading">Appearance</h2>
+          <div class="group">
+            <div class="row">
+              <span class="row-copy">
+                <strong id="themeLabel">Theme</strong>
+                <small>For FocusDeck's panels on X and this page.</small>
+              </span>
+              <div class="segmented" role="radiogroup" aria-labelledby="themeLabel">
+                <label>
+                  <input type="radio" name="themeMode" value="system" checked />
+                  <span>System</span>
+                </label>
+                <label>
+                  <input type="radio" name="themeMode" value="light" />
+                  <span>Light</span>
+                </label>
+                <label>
+                  <input type="radio" name="themeMode" value="dark" />
+                  <span>Dark</span>
+                </label>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <section class="section" aria-labelledby="dataHeading">
+          <h2 id="dataHeading">Session data</h2>
+          <div class="group">
+            <div class="row">
+              <span class="row-copy">
+                <strong>Clear unfinished session</strong>
+                <small>Use this if a tab closed mid-session and you'd rather start fresh than resume.</small>
+              </span>
+              <button id="clearSnapshot" type="button" class="btn btn-quiet btn-small">Clear</button>
+            </div>
+          </div>
+        </section>
+      </main>
+
+      <footer class="savebar">
+        <p id="status" class="status" role="status" aria-live="polite">No unsaved changes</p>
+        <div class="savebar-actions">
+          <button id="resetDefaults" type="button" class="btn btn-quiet">Reset to defaults</button>
+          <button id="applyChanges" type="button" class="btn btn-primary">Save changes</button>
+        </div>
+      </footer>
+    </div>
 
     <script type="module" src="./settings.ts"></script>
   </body>

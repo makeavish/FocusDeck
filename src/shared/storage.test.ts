@@ -5,6 +5,7 @@ import {
   getDailyUsage,
   getSessionConfig,
   getSessionSnapshot,
+  normalizeSessionSnapshot,
   getSiteSettings,
   setDailyLimits,
   setDailyUsage,
@@ -301,4 +302,31 @@ describe("shared/storage migration sanitization", () => {
       x: updated
     });
   });
+  it.each([
+    { dateKey: todayKey() },
+    { dateKey: todayKey(), global: null, perSite: null },
+    { dateKey: todayKey(), global: { postsViewed: "bad" }, perSite: { x: null, y: { postsViewed: -4 } } }
+  ])("sanitizes malformed daily records before nested access: %j", async (record) => {
+    mocks.store[STORAGE_KEYS.dailyUsage] = record;
+    const usage = await getDailyUsage();
+    expect(usage.global.postsViewed).toBe(0);
+    expect(Object.values(usage.perSite).every((bucket) => bucket.postsViewed === 0)).toBe(true);
+    expect(mocks.store[STORAGE_KEYS.dailyUsage]).toEqual(usage);
+  });
+
+  it("preserves durable session identity while normalizing recoverable progress", () => {
+    const raw = { adapterId: "x", sessionId: "stable-session", stats: { viewedPostIds: ["a", "b", "b"] } };
+    expect(normalizeSessionSnapshot(raw)?.sessionId).toBe("stable-session");
+    expect(normalizeSessionSnapshot(raw)?.stats.viewedPostIds).toEqual(["a", "b"]);
+    expect(normalizeSessionSnapshot({ ...raw, sessionId: 12 })?.sessionId).toBeUndefined();
+  });
+
+  it("preserves only recoverable presentations backed by committed progress", () => {
+    const snapshot = normalizeSessionSnapshot({ adapterId: "x", stats: { viewedPostIds: ["a", "b"] }, pendingPresentations: [
+      { progressKey: "a", postId: "post-a" }, { progressKey: "b", postId: null },
+      { progressKey: "uncharged", postId: "post-c" }, { progressKey: "a", postId: 42 }, null
+    ] });
+    expect(snapshot?.pendingPresentations).toEqual([{ progressKey: "a", postId: "post-a" }, { progressKey: "b", postId: null }]);
+  });
+
 });

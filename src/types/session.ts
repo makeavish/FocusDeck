@@ -21,6 +21,8 @@ export interface SessionStats {
 }
 
 export interface SessionSnapshot {
+  sessionId?: string;
+  pendingPresentations?: { progressKey: string; postId: string | null }[];
   phase: SessionPhase;
   adapterId: string;
   config: SessionConfig;

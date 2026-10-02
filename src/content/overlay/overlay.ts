@@ -37,6 +37,37 @@ export class OverlayController {
   private shadow: ShadowRoot | null = null;
   private app: HTMLElement | null = null;
   private blockingModalVisible = false;
+  private focusBeforeModal: HTMLElement | null = null;
+  private focusKeyBeforeModal: string | null = null;
+
+  private readonly containModalFocus = (event: KeyboardEvent): void => {
+    if (!this.blockingModalVisible || event.key !== "Tab") {
+      return;
+    }
+    const modal = this.getActiveModal();
+    if (!modal) {
+      return;
+    }
+    const controls = Array.from(modal.querySelectorAll<HTMLElement>(
+      "button, input, select, textarea, a[href], [tabindex]"
+    )).filter((node) => node.tabIndex >= 0 && !node.matches(":disabled") && !node.closest("[hidden], [inert]"));
+    const active = this.shadow?.activeElement;
+    const index = controls.findIndex((node) => node === active);
+    const next = event.shiftKey
+      ? (index <= 0 ? controls.length - 1 : index - 1)
+      : (index + 1) % controls.length;
+    event.preventDefault();
+    event.stopPropagation();
+    (controls[next] ?? modal).focus({ preventScroll: true });
+  };
+
+  private readonly redirectModalFocus = (event: FocusEvent): void => {
+    const modal = this.getActiveModal();
+    const origin = event.composedPath()[0];
+    if (this.blockingModalVisible && modal && (!(origin instanceof Node) || !modal.contains(origin))) {
+      (modal.querySelector<HTMLElement>("[data-fd-autofocus]") ?? modal).focus({ preventScroll: true });
+    }
+  };
 
   private readonly state: OverlayState = {
     view: null,
@@ -82,11 +113,16 @@ export class OverlayController {
     this.host = host;
     this.shadow = shadow;
     this.app = app;
+    document.addEventListener("keydown", this.containModalFocus, true);
+    document.addEventListener("focusin", this.redirectModalFocus, true);
     this.render();
   }
 
   unmount(): void {
     this.setBlockingModalVisibility(false);
+    document.removeEventListener("keydown", this.containModalFocus, true);
+    document.removeEventListener("focusin", this.redirectModalFocus, true);
+    this.restorePreviousFocus();
 
     if (this.host) {
       this.host.remove();
@@ -141,6 +177,15 @@ export class OverlayController {
       return;
     }
 
+    const focusKey = this.readFocusKey();
+    const modalWasVisible = this.blockingModalVisible;
+    const modalWillBeVisible = this.state.prompt.visible || this.state.dailyLimitReached;
+    if (!modalWasVisible && modalWillBeVisible) {
+      const active = this.shadow?.activeElement ?? document.activeElement;
+      this.focusBeforeModal = active instanceof HTMLElement ? active : null;
+      this.focusKeyBeforeModal = focusKey;
+    }
+
     this.app.className = `fd-root fd-theme-${this.resolveTheme()}`;
 
     this.app.replaceChildren();
@@ -171,6 +216,44 @@ export class OverlayController {
     }
 
     this.setBlockingModalVisibility(this.state.prompt.visible || this.state.dailyLimitReached);
+    if (modalWasVisible && !this.blockingModalVisible) {
+      this.restorePreviousFocus();
+    } else {
+      this.restoreFocus(focusKey, !modalWasVisible && this.blockingModalVisible);
+    }
+  }
+
+  // render() rebuilds the tree, so carry keyboard focus across by a stable key.
+  private readFocusKey(): string | null {
+    const active = this.shadow?.activeElement;
+    return active instanceof HTMLElement ? active.dataset.fdFocusKey ?? null : null;
+  }
+
+  private restoreFocus(focusKey: string | null, modalOpened: boolean): void {
+    if (!this.app) {
+      return;
+    }
+
+    const scope = this.blockingModalVisible ? this.getActiveModal() : this.app;
+    const target =
+      (focusKey ? scope?.querySelector<HTMLElement>(`[data-fd-focus-key="${focusKey}"]`) : null) ??
+      (this.blockingModalVisible || modalOpened ? scope?.querySelector<HTMLElement>("[data-fd-autofocus]") ?? scope : null);
+    target?.focus({ preventScroll: true });
+  }
+
+  private getActiveModal(): HTMLElement | null {
+    return this.app?.querySelector<HTMLElement>(".fd-daily-limit") ?? this.app?.querySelector<HTMLElement>(".fd-session-gate") ?? null;
+  }
+
+  private restorePreviousFocus(): void {
+    const previous = this.focusBeforeModal;
+    const target = previous?.isConnected ? previous :
+      this.focusKeyBeforeModal ? this.app?.querySelector<HTMLElement>(`[data-fd-focus-key="${this.focusKeyBeforeModal}"]`) : null;
+    if (target && !target.closest("[inert]")) {
+      target.focus({ preventScroll: true });
+    }
+    this.focusBeforeModal = null;
+    this.focusKeyBeforeModal = null;
   }
 
   private setBlockingModalVisibility(visible: boolean): void {
@@ -237,22 +320,23 @@ export class OverlayController {
 
     const dock = document.createElement("aside");
     dock.className = "fd-top-dock";
+    dock.setAttribute("aria-label", "FocusDeck session");
 
-    const progress = document.createElement("aside");
-    progress.className = "fd-progress-pill";
-    progress.textContent = this.renderProgressLabel(view);
-
-    const row = document.createElement("aside");
-    row.className = `fd-action-pill ${snapshot.config.minimalMode ? "fd-action-pill-minimal" : ""}`;
+    const row = document.createElement("div");
+    row.className = `fd-action-pill ${snapshot.config.minimalMode ? "fd-action-pill-minimal" : ""}`.trim();
+    row.setAttribute("role", "toolbar");
+    row.setAttribute("aria-label", "Post actions");
 
     const button = (label: string, shortcut: string, action: () => void, kind = "") => {
       const node = document.createElement("button");
       node.type = "button";
       node.className = `fd-pill-btn ${kind}`.trim();
+      node.dataset.fdFocusKey = `action-${label.toLowerCase()}`;
+      node.setAttribute("aria-keyshortcuts", shortcut);
       const labelNode = document.createElement("span");
       labelNode.className = "fd-pill-label";
       labelNode.textContent = label;
-      const shortcutNode = document.createElement("span");
+      const shortcutNode = document.createElement("kbd");
       shortcutNode.className = "fd-pill-key";
       shortcutNode.textContent = shortcut;
       node.append(labelNode, shortcutNode);
@@ -266,14 +350,40 @@ export class OverlayController {
       button("Hide", "X", () => this.callbacks.onAction("notInterested"), "danger")
     );
 
-    dock.append(progress, row);
+    dock.append(this.renderProgress(view), row);
     shell.append(dock);
     return shell;
   }
 
-  private renderProgressLabel(view: DeckViewState): string {
-    const snapshot = view.snapshot;
-    return `${snapshot.stats.viewedCount}/${snapshot.config.postLimit} posts`;
+  private renderProgress(view: DeckViewState): HTMLElement {
+    const { stats, config } = view.snapshot;
+    const limit = Math.max(1, config.postLimit);
+    const viewed = Math.min(stats.viewedCount, limit);
+
+    const progress = document.createElement("div");
+    progress.className = "fd-progress-pill";
+    progress.title = `${stats.viewedCount} of ${config.postLimit} posts viewed this session`;
+
+    const count = document.createElement("span");
+    count.className = "fd-progress-count";
+    const current = document.createElement("strong");
+    current.textContent = String(stats.viewedCount);
+    count.append(current, `/${config.postLimit}`);
+
+    const unit = document.createElement("span");
+    unit.className = "fd-progress-unit";
+    unit.textContent = "posts";
+
+    const track = document.createElement("span");
+    track.className = "fd-progress-track";
+    track.setAttribute("aria-hidden", "true");
+    const fill = document.createElement("span");
+    fill.className = "fd-progress-fill";
+    fill.style.width = `${(viewed / limit) * 100}%`;
+    track.append(fill);
+
+    progress.append(count, unit, track);
+    return progress;
   }
 
   private resolveTheme(): "dark" | "light" {
@@ -285,7 +395,7 @@ export class OverlayController {
   }
 
   private renderPrompt(): HTMLElement | null {
-    if (!this.state.prompt.visible) {
+    if (!this.state.prompt.visible || this.state.dailyLimitReached) {
       return null;
     }
 
@@ -295,63 +405,67 @@ export class OverlayController {
     backdrop.className = "fd-modal-backdrop";
 
     const prompt = document.createElement("article");
-    prompt.className = "fd-modal fd-surface-card fd-session-gate";
+    prompt.className = "fd-modal fd-session-gate";
+    prompt.tabIndex = -1;
+    prompt.setAttribute("role", "dialog");
+    prompt.setAttribute("aria-modal", "true");
+    prompt.setAttribute("aria-labelledby", "fd-prompt-title");
+    prompt.setAttribute("aria-describedby", "fd-prompt-body");
 
-    prompt.append(this.renderSunIcon());
-
-    const title = document.createElement("h3");
-    title.className = "fd-surface-title";
-    title.textContent = "Start session";
+    const title = document.createElement("h2");
+    title.id = "fd-prompt-title";
+    title.className = "fd-modal-title";
+    title.textContent = "How many posts this time?";
 
     const copy = document.createElement("p");
-    copy.className = "fd-surface-body";
-    copy.textContent = "Review one post at a time.";
+    copy.id = "fd-prompt-body";
+    copy.className = "fd-modal-body";
+    copy.textContent = "You'll see one post at a time. The feed locks again when you reach your number.";
 
-    const target = document.createElement("section");
-    target.className = "fd-target";
+    const choices = document.createElement("div");
+    choices.className = "fd-choices";
+    choices.setAttribute("role", "group");
+    choices.setAttribute("aria-label", "Posts this session");
 
-    const targetHead = document.createElement("div");
-    targetHead.className = "fd-target-head";
-
-    const targetLabel = document.createElement("span");
-    targetLabel.className = "fd-target-label";
-    targetLabel.textContent = "Posts this session";
-    targetHead.append(targetLabel);
-
-    if (this.state.prompt.postLimitCap !== null) {
-      const badge = document.createElement("span");
-      badge.className = "fd-target-badge";
-      badge.textContent = `${this.state.prompt.postLimitCap} left today`;
-      targetHead.append(badge);
-    }
-
-    target.append(targetHead);
-
-    const valueSelect = document.createElement("select");
-    valueSelect.className = "fd-target-select";
-    const appendOption = (value: string, label = value) => {
-      const option = document.createElement("option");
-      option.value = value;
-      option.textContent = label;
-      valueSelect.append(option);
+    const choice = (value: string, label: string, extraClass = "") => {
+      const node = document.createElement("button");
+      node.type = "button";
+      node.className = `fd-choice ${extraClass}`.trim();
+      node.dataset.fdFocusKey = `choice-${value}`;
+      const selected = this.state.prompt.preset === value;
+      node.setAttribute("aria-pressed", String(selected));
+      node.textContent = label;
+      node.addEventListener("click", () => {
+        if (this.state.prompt.preset === value) {
+          return;
+        }
+        this.state.prompt.preset = value;
+        this.render();
+        if (value === "custom") {
+          this.app?.querySelector<HTMLInputElement>('[data-fd-focus-key="custom-input"]')?.focus({ preventScroll: true });
+        }
+      });
+      return node;
     };
 
-    const presets = this.getPostPresetOptions();
-    for (const preset of presets) {
-      appendOption(String(preset), `${preset} posts`);
+    for (const preset of this.getPostPresetOptions()) {
+      choices.append(choice(String(preset), String(preset)));
     }
-    appendOption("custom", "Custom post target");
+    choices.append(choice("custom", "Custom", "fd-choice-custom"));
 
-    valueSelect.value = this.state.prompt.preset;
-    valueSelect.addEventListener("change", () => {
-      this.state.prompt.preset = valueSelect.value;
-      this.render();
-    });
-    target.append(valueSelect);
+    const isCustom = this.state.prompt.preset === "custom";
+    const custom = document.createElement("label");
+    custom.className = "fd-custom";
+    custom.hidden = !isCustom;
+
+    const customLabel = document.createElement("span");
+    customLabel.textContent = "Custom target";
 
     const customInput = document.createElement("input");
-    customInput.className = "fd-target-custom";
+    customInput.className = "fd-custom-input";
+    customInput.dataset.fdFocusKey = "custom-input";
     customInput.type = "number";
+    customInput.inputMode = "numeric";
     customInput.min = "1";
     customInput.step = "1";
     if (this.state.prompt.postLimitCap !== null) {
@@ -360,15 +474,18 @@ export class OverlayController {
       customInput.removeAttribute("max");
     }
     customInput.value = String(this.state.prompt.customValue);
-    customInput.style.display = this.state.prompt.preset === "custom" ? "block" : "none";
-    target.append(customInput);
 
-    const actions = document.createElement("div");
-    actions.className = "fd-surface-actions";
+    const customUnit = document.createElement("span");
+    customUnit.className = "fd-custom-unit";
+    customUnit.textContent = "posts";
+
+    custom.append(customLabel, customInput, customUnit);
 
     const start = document.createElement("button");
     start.type = "button";
-    start.className = "fd-surface-btn primary";
+    start.className = "fd-btn fd-btn-primary fd-btn-block";
+    start.dataset.fdFocusKey = "start";
+    start.dataset.fdAutofocus = "";
 
     const updateStartLabel = () => {
       const value = this.resolvePromptPostLimitValue();
@@ -387,6 +504,12 @@ export class OverlayController {
     };
     customInput.addEventListener("input", syncCustomValue);
     customInput.addEventListener("change", syncCustomValue);
+    customInput.addEventListener("keydown", (event) => {
+      if (event.key === "Enter") {
+        event.preventDefault();
+        start.click();
+      }
+    });
 
     updateStartLabel();
     start.addEventListener("click", () => {
@@ -394,8 +517,17 @@ export class OverlayController {
       this.callbacks.onStartSession({ postLimit: value });
     });
 
-    actions.append(start);
-    prompt.append(title, copy, target, actions);
+    prompt.append(this.renderBrand(), title, copy, choices, custom);
+
+    if (this.state.prompt.postLimitCap !== null) {
+      const remaining = document.createElement("p");
+      remaining.className = "fd-modal-note";
+      const cap = this.state.prompt.postLimitCap;
+      remaining.textContent = `${cap} ${cap === 1 ? "post" : "posts"} left in today's limit.`;
+      prompt.append(remaining);
+    }
+
+    prompt.append(start);
     backdrop.append(prompt);
     return backdrop;
   }
@@ -410,49 +542,63 @@ export class OverlayController {
 
     const card = document.createElement("article");
     card.className = "fd-modal fd-daily-limit";
+    card.setAttribute("role", "alertdialog");
+    card.setAttribute("aria-modal", "true");
+    card.setAttribute("aria-labelledby", "fd-daily-title");
+    card.setAttribute("aria-describedby", "fd-daily-body");
+    card.tabIndex = -1;
+    card.dataset.fdAutofocus = "";
 
-    const icon = this.renderSunIcon();
+    const title = document.createElement("h2");
+    title.id = "fd-daily-title";
+    title.className = "fd-modal-title";
+    title.textContent = "Daily limit reached";
 
-    const title = document.createElement("h3");
-    title.textContent = "Daily limit reached.";
+    const { postsToday, siteLabel } = this.state.dailyLimitContext;
 
-    const body = document.createElement("p");
-    body.className = "fd-daily-body";
-    const highlighted = document.createElement("strong");
-    const posts = this.state.dailyLimitContext.postsToday;
-    highlighted.textContent = `${posts ?? 0} posts`;
+    const body = document.createElement("div");
+    body.id = "fd-daily-body";
+    body.className = "fd-daily-stat";
 
-    if (posts !== null) {
-      body.append("You've viewed ", highlighted, ` on ${this.state.dailyLimitContext.siteLabel} today.`);
+    if (postsToday !== null) {
+      const figure = document.createElement("span");
+      figure.className = "fd-daily-figure";
+      figure.textContent = String(postsToday);
+
+      const caption = document.createElement("span");
+      caption.className = "fd-daily-caption";
+      caption.textContent = `${postsToday === 1 ? "post" : "posts"} viewed on ${siteLabel} today`;
+      body.append(figure, caption);
     } else {
-      body.textContent = `You've reached your daily limit on ${this.state.dailyLimitContext.siteLabel} today.`;
+      const caption = document.createElement("p");
+      caption.className = "fd-modal-body";
+      caption.textContent = `You've used today's post limit on ${siteLabel}.`;
+      body.append(caption);
     }
 
-    const caption = document.createElement("p");
-    caption.className = "fd-daily-caption";
-    caption.textContent = "Rest is productive too.";
+    const note = document.createElement("p");
+    note.className = "fd-modal-note";
+    note.textContent = "Your feed unlocks again at midnight.";
 
     const actions = document.createElement("div");
-    actions.className = "fd-daily-actions";
+    actions.className = "fd-modal-actions";
 
     const close = document.createElement("button");
     close.type = "button";
-    close.className = "fd-daily-btn primary";
-    close.textContent = "Close Feed";
+    close.className = "fd-btn fd-btn-primary";
+    close.dataset.fdFocusKey = "daily-close";
+    close.textContent = "Close tab";
     close.addEventListener("click", this.callbacks.onDismissDailyLimit);
 
     const settings = document.createElement("button");
     settings.type = "button";
-    settings.className = "fd-daily-btn";
-    settings.textContent = "Settings";
+    settings.className = "fd-btn fd-btn-quiet";
+    settings.dataset.fdFocusKey = "daily-settings";
+    settings.textContent = "Open settings";
     settings.addEventListener("click", this.callbacks.onOpenSettings);
 
-    const brand = document.createElement("p");
-    brand.className = "fd-daily-brand";
-    brand.textContent = "FocusDeck";
-
     actions.append(close, settings);
-    card.append(icon, title, body, caption, actions, brand);
+    card.append(this.renderBrand(), title, body, note, actions);
     backdrop.append(card);
     return backdrop;
   }
@@ -464,17 +610,46 @@ export class OverlayController {
 
     const status = document.createElement("aside");
     status.className = "fd-status";
+    status.setAttribute("role", "status");
     status.textContent = this.state.status;
     return status;
   }
 
-  private renderSunIcon(): HTMLElement {
-    const icon = document.createElement("div");
-    icon.className = "fd-daily-icon";
-    const iconCore = document.createElement("span");
-    iconCore.className = "fd-daily-icon-core";
-    icon.append(iconCore);
-    return icon;
+  private renderBrand(): HTMLElement {
+    const brand = document.createElement("p");
+    brand.className = "fd-brand";
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    const mark = document.createElementNS(svgNs, "svg");
+    mark.setAttribute("viewBox", "0 0 20 20");
+    mark.setAttribute("aria-hidden", "true");
+    mark.classList.add("fd-brand-mark");
+
+    const rect = (x: string, y: string, className?: string) => {
+      const node = document.createElementNS(svgNs, "rect");
+      node.setAttribute("x", x);
+      node.setAttribute("y", y);
+      node.setAttribute("width", "13");
+      node.setAttribute("height", "11");
+      node.setAttribute("rx", "2.5");
+      if (className) {
+        node.classList.add(className);
+      }
+      return node;
+    };
+
+    const back = rect("5", "2", "fd-brand-mark-back");
+    const front = rect("2", "7");
+
+    const dot = document.createElementNS(svgNs, "circle");
+    dot.setAttribute("cx", "8.5");
+    dot.setAttribute("cy", "12.5");
+    dot.setAttribute("r", "2.25");
+    dot.classList.add("fd-brand-mark-dot");
+
+    mark.append(back, front, dot);
+    brand.append(mark, "FocusDeck");
+    return brand;
   }
 
   private getPostPresetOptions(): number[] {

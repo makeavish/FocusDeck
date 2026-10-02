@@ -1,6 +1,6 @@
-import { applyUsageDelta, isDailyLimitReached } from "@/core/daily-counter";
+import { isDailyLimitReached, localDateKey, normalizeUsageForDate } from "@/core/daily-counter";
 import { transitionSessionPhase } from "@/core/session-state";
-import { clearSessionSnapshot, setDailyUsage, setSessionSnapshot } from "@/shared/storage";
+import { acknowledgeDailyView, clearOwnedSessionSnapshot, commitDailyView, releaseDailyView, reserveDailyView, saveOwnedSessionSnapshot, type ViewRequest } from "@/shared/runtime-state";
 import type { ActionResult, Adapter, AdapterAction, PostHandle, PostMeta } from "@/types/adapter";
 import type {
   DailyLimitsConfig,
@@ -18,6 +18,7 @@ export interface DeckViewState {
   focusedHandle: PostHandle | null;
   focusedMeta: PostMeta | null;
   feedCount: number;
+  feedItems: PostHandle[];
 }
 
 interface RuntimeState {
@@ -26,10 +27,13 @@ interface RuntimeState {
 }
 
 interface EngineCallbacks {
+  observeFeed?: boolean;
+  reconcileOwnership?: (snapshot: SessionSnapshot) => Promise<SessionSnapshot | null>;
   onComplete?: (summary: SessionSummary) => void;
   onDailyLimitReached?: () => void;
   onDailyUsageUpdated?: (usage: DailyUsage) => void;
   canCountProgress?: () => boolean;
+  onError?: (message: string) => void;
 }
 
 type StateListener = (state: DeckViewState) => void;
@@ -54,6 +58,11 @@ export class DeckEngine {
   private scrollRafId = 0;
   private persistTimerId: number | null = null;
   private routePauseReason: PauseReason = null;
+  private generation = 0;
+  private pendingFocus: Promise<boolean> | null = null;
+  private readonly unsettledViews = new Map<string, ViewRequest>();
+  private dailyContextRevision = 0;
+  private ownershipReconciliation: Promise<boolean> | null = null;
 
   constructor(
     private readonly adapter: Adapter,
@@ -67,8 +76,39 @@ export class DeckEngine {
   }
 
   setDailyContext(limits: DailyLimitsConfig, usage: DailyUsage): void {
+    this.dailyContextRevision += 1;
     this.dailyLimits = limits;
-    this.dailyUsage = usage;
+    this.dailyUsage = normalizeUsageForDate(usage, localDateKey());
+    if (!this.pendingFocus) {
+      this.checkDailyLimits();
+      this.emit();
+    }
+  }
+
+  async reconcileOwnership(): Promise<boolean> {
+    const reconcile = this.callbacks.reconcileOwnership;
+    if (!this.state || !reconcile) return true;
+    if (this.ownershipReconciliation) return this.ownershipReconciliation;
+    const state = this.state;
+    this.ownershipReconciliation = (async () => {
+      const snapshot = await reconcile(this.cloneSnapshot(state.snapshot)).catch(() => null);
+      if (this.state !== state) return false;
+      if (!snapshot || snapshot.sessionId !== state.snapshot.sessionId) {
+        await this.pause("manual");
+        this.callbacks.onError?.("Session ownership is unavailable. Stop this session or reload to start again.");
+        return false;
+      }
+      state.viewedIdSet = new Set(snapshot.stats.viewedPostIds);
+      state.snapshot.stats.viewedPostIds = [...state.viewedIdSet];
+      state.snapshot.stats.viewedCount = state.viewedIdSet.size;
+      state.snapshot.pendingPresentations = snapshot.pendingPresentations;
+      return true;
+    })();
+    try {
+      return await this.ownershipReconciliation;
+    } finally {
+      this.ownershipReconciliation = null;
+    }
   }
 
   getDailyUsage(): DailyUsage {
@@ -77,6 +117,10 @@ export class DeckEngine {
 
   getPhase(): SessionSnapshot["phase"] {
     return this.state?.snapshot.phase ?? "idle";
+  }
+
+  getPauseReason(): PauseReason {
+    return this.state?.snapshot.pauseReason ?? null;
   }
 
   getFocusedPostId(): string | null {
@@ -93,6 +137,9 @@ export class DeckEngine {
   }
 
   async start(config: SessionConfig, snapshot?: SessionSnapshot | null): Promise<boolean> {
+    if (this.state) {
+      return false;
+    }
     const feedItems = this.adapter.getFeedItems();
     if (!feedItems.length) {
       return false;
@@ -102,6 +149,8 @@ export class DeckEngine {
     const stats = resumed && snapshot ? { ...snapshot.stats } : { ...EMPTY_STATS };
     const viewedSet = new Set(stats.viewedPostIds);
     const nextSnapshot: SessionSnapshot = {
+      sessionId: resumed && snapshot?.sessionId ? snapshot.sessionId : crypto.randomUUID(),
+      ...(resumed && snapshot?.pendingPresentations ? { pendingPresentations: [...snapshot.pendingPresentations] } : {}),
       phase: "active",
       adapterId: this.adapter.id,
       config: { ...config },
@@ -125,19 +174,50 @@ export class DeckEngine {
       viewedIdSet: viewedSet
     };
 
+    const savedSnapshot = await saveOwnedSessionSnapshot(this.cloneSnapshot(nextSnapshot));
+    if (this.state?.snapshot !== nextSnapshot) return false;
+    nextSnapshot.sessionId = savedSnapshot.sessionId ?? nextSnapshot.sessionId;
+    nextSnapshot.stats = savedSnapshot.stats;
+    nextSnapshot.pendingPresentations = savedSnapshot.pendingPresentations;
+    viewedSet.clear();
+    for (const key of nextSnapshot.stats.viewedPostIds) viewedSet.add(key);
+    // Present already-charged progress before applying either cap to recovery.
+    const pendingHandle = this.adapter.getFeedItems().find((handle) => nextSnapshot.pendingPresentations?.some((pending) =>
+      pending.progressKey === (this.adapter.getProgressKey ? this.adapter.getProgressKey(handle) : handle.id) &&
+      (!pending.postId || pending.postId === handle.id)));
+    if (pendingHandle && await this.applyFocusedHandle(pendingHandle, false)) {
+      this.adapter.focusItem(pendingHandle);
+      if (this.state && this.state.snapshot.phase !== "completed") {
+        this.attachObserver();
+        this.attachWindowTracking();
+      }
+      return true;
+    }
+    if (nextSnapshot.pendingPresentations?.length) {
+      // An absent charged card must stay recoverable rather than complete unseen or expose a replacement.
+      const reached = isDailyLimitReached(this.dailyLimits, normalizeUsageForDate(this.dailyUsage, localDateKey()), this.adapter.id);
+      await this.pause(reached ? "limit" : "manual");
+      if (reached) this.callbacks.onDailyLimitReached?.();
+      return true;
+    }
+    if (nextSnapshot.config.postLimit > 0 && nextSnapshot.stats.viewedCount >= nextSnapshot.config.postLimit) {
+      this.checkDailyLimits();
+      this.checkSessionLimit();
+      return true;
+    }
     this.attachObserver();
     this.attachWindowTracking();
 
-    if (nextSnapshot.focusedPostId && this.restoreFocus(nextSnapshot.focusedPostId, false)) {
+    if (nextSnapshot.focusedPostId && await this.restoreFocus(nextSnapshot.focusedPostId, false)) {
       this.emit();
       this.persistSoon();
       return true;
     }
 
     if (resumed) {
-      this.focusNearestToViewportCenter(true);
-    } else if (!this.focusFirstVisible(true)) {
-      this.focusNearestToViewportCenter(true);
+      await this.focusNearestToViewportCenter(true);
+    } else if (!await this.focusFirstVisible(true)) {
+      await this.focusNearestToViewportCenter(true);
     }
     this.emit();
     this.persistSoon();
@@ -158,12 +238,24 @@ export class DeckEngine {
       this.callbacks.onComplete?.(summary);
     }
 
-    await setDailyUsage(this.dailyUsage);
+    await this.dispose();
+    await clearOwnedSessionSnapshot();
+  }
+
+  async dispose(): Promise<void> {
+    this.generation += 1;
     this.teardown();
     this.clearFocusMarkers();
     this.state = null;
     this.focusedHandle = null;
-    await clearSessionSnapshot();
+    await this.pendingFocus;
+    for (const view of this.unsettledViews.values()) await this.releaseView(view);
+  }
+
+  private async releaseView(view: ViewRequest) {
+    const result = await releaseDailyView(view);
+    this.unsettledViews.delete(view.requestId);
+    return result;
   }
 
   async pause(reason: Exclude<PauseReason, null>): Promise<void> {
@@ -171,6 +263,7 @@ export class DeckEngine {
       return;
     }
 
+    this.generation += 1;
     this.routePauseReason = reason;
     this.state.snapshot.phase = transitionSessionPhase(this.state.snapshot.phase, { type: "pause", reason });
     this.state.snapshot.pauseReason = reason;
@@ -184,6 +277,11 @@ export class DeckEngine {
       return;
     }
 
+    if (isDailyLimitReached(this.dailyLimits, normalizeUsageForDate(this.dailyUsage, localDateKey()), this.adapter.id)) {
+      this.callbacks.onDailyLimitReached?.();
+      return;
+    }
+    this.generation += 1;
     this.routePauseReason = null;
     this.state.snapshot.phase = transitionSessionPhase(this.state.snapshot.phase, { type: "resume" });
     this.state.snapshot.pauseReason = null;
@@ -201,12 +299,17 @@ export class DeckEngine {
       return null;
     }
 
-    const focusedHandle = this.focusedHandle ? this.findHandleById(this.focusedHandle.id) : null;
+    const feedItems = this.adapter.getFeedItems();
+    const focusedHandle = this.focusedHandle
+      ? feedItems.find((handle) => handle.element === this.focusedHandle?.element && handle.id === this.focusedHandle.id) ??
+        feedItems.find((handle) => handle.id === this.focusedHandle?.id) ?? null
+      : null;
     return {
       snapshot: this.cloneSnapshot(this.state.snapshot),
       focusedHandle,
       focusedMeta: focusedHandle ? this.adapter.getPostMeta(focusedHandle) : null,
-      feedCount: this.adapter.getFeedItems().length
+      feedCount: feedItems.length,
+      feedItems
     };
   }
 
@@ -221,7 +324,7 @@ export class DeckEngine {
     }
 
     const currentId = this.state.snapshot.focusedPostId;
-    const currentIndex = currentId ? items.findIndex((item) => item.id === currentId) : -1;
+    const currentIndex = currentId ? items.findIndex((item) => item.element === this.focusedHandle?.element && item.id === currentId) : -1;
     const nextHandle = items[currentIndex + 1] ?? null;
 
     if (!nextHandle) {
@@ -229,9 +332,11 @@ export class DeckEngine {
       return false;
     }
 
-    this.adapter.focusItem(nextHandle);
-    this.applyFocusedHandle(nextHandle, true);
-    return true;
+    const moved = await this.applyFocusedHandle(nextHandle, true);
+    if (moved) {
+      this.adapter.focusItem(nextHandle);
+    }
+    return moved;
   }
 
   async previous(): Promise<boolean> {
@@ -245,19 +350,21 @@ export class DeckEngine {
     }
 
     const currentId = this.state.snapshot.focusedPostId;
-    const currentIndex = currentId ? items.findIndex((item) => item.id === currentId) : -1;
+    const currentIndex = currentId ? items.findIndex((item) => item.element === this.focusedHandle?.element && item.id === currentId) : -1;
     const previousHandle = currentIndex > 0 ? items[currentIndex - 1] : null;
 
     if (!previousHandle) {
       return false;
     }
 
-    this.adapter.focusItem(previousHandle);
-    this.applyFocusedHandle(previousHandle, true);
-    return true;
+    const moved = await this.applyFocusedHandle(previousHandle, true);
+    if (moved) {
+      this.adapter.focusItem(previousHandle);
+    }
+    return moved;
   }
 
-  focusNearestToViewportCenter(force = false, countView = true): boolean {
+  async focusNearestToViewportCenter(force = false, countView = true): Promise<boolean> {
     if (!this.state || this.state.snapshot.phase !== "active") {
       return false;
     }
@@ -304,15 +411,14 @@ export class DeckEngine {
       nextHandle = best.handle;
     }
 
-    if (!force && this.state.snapshot.focusedPostId === nextHandle.id) {
+    if (!force && this.state.snapshot.focusedPostId === nextHandle.id && this.focusedHandle?.element === nextHandle.element) {
       return true;
     }
 
-    this.applyFocusedHandle(nextHandle, countView);
-    return true;
+    return this.applyFocusedHandle(nextHandle, countView);
   }
 
-  private focusFirstVisible(countView = true): boolean {
+  private async focusFirstVisible(countView = true): Promise<boolean> {
     if (!this.state || this.state.snapshot.phase !== "active") {
       return false;
     }
@@ -337,11 +443,10 @@ export class DeckEngine {
       return false;
     }
 
-    this.applyFocusedHandle(firstVisible, countView);
-    return true;
+    return this.applyFocusedHandle(firstVisible, countView);
   }
 
-  restoreFocus(postId: string | null, countView = false): boolean {
+  async restoreFocus(postId: string | null, countView = false): Promise<boolean> {
     if (!postId || !this.state) {
       return false;
     }
@@ -351,9 +456,11 @@ export class DeckEngine {
       return false;
     }
 
-    this.adapter.focusItem(handle);
-    this.applyFocusedHandle(handle, countView);
-    return true;
+    const restored = await this.applyFocusedHandle(handle, countView);
+    if (restored) {
+      this.adapter.focusItem(handle);
+    }
+    return restored;
   }
 
   async runAction(action: AdapterAction, userGesture = false): Promise<ActionResult> {
@@ -365,14 +472,25 @@ export class DeckEngine {
       return { ok: false, message: "Action requires an explicit user gesture." };
     }
 
-    const focused = this.state.snapshot.focusedPostId ? this.findHandleById(this.state.snapshot.focusedPostId) : null;
+    const focused = this.getViewState()?.focusedHandle ?? null;
     if (!focused) {
       return { ok: false, message: "No focused post found." };
     }
 
+    const actionState = this.state;
+    const generation = this.generation;
+    const permalink = this.adapter.getPermalink?.(focused);
+    const isCurrent = () => this.state === actionState && this.generation === generation &&
+      actionState.snapshot.phase === "active" && focused.element.isConnected &&
+      this.callbacks.canCountProgress?.() !== false &&
+      this.adapter.getFeedItems().some((handle) => handle.element === focused.element && handle.id === focused.id) &&
+      this.adapter.getPermalink?.(focused) === permalink;
+
     try {
-      const result = await this.dispatcher.dispatch(() => this.executeAction(action, focused));
-      if (!result.ok) {
+      const result = await this.dispatcher.dispatch(() => isCurrent()
+        ? this.executeAction(action, focused, isCurrent)
+        : { ok: false, message: "Post or session changed. Try again." });
+      if (!result.ok || !isCurrent()) {
         this.emit();
         return result;
       }
@@ -395,9 +513,9 @@ export class DeckEngine {
     }
   }
 
-  private async executeAction(action: AdapterAction, handle: PostHandle): Promise<ActionResult> {
+  private async executeAction(action: AdapterAction, handle: PostHandle, isCurrent: () => boolean): Promise<ActionResult> {
     if (action === "notInterested") {
-      return this.adapter.notInterested(handle);
+      return this.adapter.notInterested(handle, isCurrent);
     }
 
     if (action === "bookmark") {
@@ -407,34 +525,133 @@ export class DeckEngine {
     return { ok: false, message: "Unsupported action." };
   }
 
-  private applyFocusedHandle(handle: PostHandle, countView: boolean): void {
-    if (!this.state) {
-      return;
+  private async applyFocusedHandle(handle: PostHandle, _countView: boolean): Promise<boolean> {
+    if (!this.state || this.state.snapshot.phase !== "active" || this.pendingFocus || this.callbacks.canCountProgress?.() === false) {
+      return false;
     }
 
-    this.focusedHandle = handle;
-    this.state.snapshot.focusedPostId = handle.id;
-    this.state.snapshot.updatedAt = Date.now();
+    const state = this.state;
+    const generation = this.generation;
+    // Restoration only skips progress that this session has already viewed.
+    const progressKey = this.adapter.getProgressKey ? this.adapter.getProgressKey(handle) : handle.id;
+    let isNew = false;
+    let pendingPresentation = false;
+    const revision = this.dailyContextRevision;
+    let view = { sessionId: state.snapshot.sessionId!, requestId: crypto.randomUUID(), progressKey: progressKey ?? "", postId: handle.id };
+    const isCurrent = () => this.state === state && this.generation === generation && state.snapshot.phase === "active" &&
+      this.callbacks.canCountProgress?.() !== false &&
+      this.adapter.getFeedItems().some((item) => item.element === handle.element && item.id === handle.id);
+    const updateContext = (result: { limits: DailyLimitsConfig; usage: DailyUsage }) => {
+      if (revision === this.dailyContextRevision) {
+        this.dailyLimits = result.limits;
+        this.dailyUsage = result.usage;
+      }
+    };
+    const task = async (): Promise<boolean> => {
+      if (this.callbacks.reconcileOwnership && !await this.reconcileOwnership()) return false;
+      if (!isCurrent()) return false;
+      isNew = Boolean(progressKey && !state.viewedIdSet.has(progressKey));
+      pendingPresentation = state.snapshot.pendingPresentations?.some((pending) => pending.progressKey === progressKey) ?? false;
+      if (state.snapshot.pendingPresentations?.length && !pendingPresentation) return false;
+      if (isNew && state.snapshot.config.postLimit > 0 && state.snapshot.stats.viewedCount >= state.snapshot.config.postLimit) {
+        this.checkSessionLimit();
+        return false;
+      }
+      if (isNew) {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          this.unsettledViews.set(view.requestId, view);
+          try {
+            const reservation = await reserveDailyView(view);
+            updateContext(reservation);
+            if (!reservation.allowed || !isCurrent()) {
+              updateContext(await this.releaseView(view));
+              this.checkDailyLimits();
+              if (isCurrent()) {
+                await this.pause("manual");
+                this.callbacks.onError?.("Unable to reserve this post. Start the session again to retry.");
+              }
+              this.emit();
+              return false;
+            }
+            const result = await commitDailyView(view);
+            updateContext(result);
+            if (!result.allowed || !isCurrent()) {
+              updateContext(await this.releaseView(view));
+              if (!result.allowed && result.denialReason === "expired" && isCurrent() && attempt === 0) {
+                view = { ...view, requestId: crypto.randomUUID() };
+                continue;
+              }
+              this.checkDailyLimits();
+              if (isCurrent()) {
+                await this.pause("manual");
+                this.callbacks.onError?.("Unable to record this post. Start the session again to retry.");
+              }
+              this.emit();
+              return false;
+            }
+            // The charge and key are durable before exposure.
+            break;
+          } catch (error) {
+            await this.releaseView(view).catch(() => undefined);
+            throw error;
+          }
+        }
+      } else if (!isCurrent()) {
+        return false;
+      }
 
-    if (countView && this.callbacks.canCountProgress?.() !== false) {
-      const progressKey = this.adapter.getProgressKey ? this.adapter.getProgressKey(handle) : handle.id;
-      if (progressKey && !this.state.viewedIdSet.has(progressKey)) {
-        this.state.viewedIdSet.add(progressKey);
-        this.state.snapshot.stats.viewedPostIds = [...this.state.viewedIdSet];
-        this.state.snapshot.stats.viewedCount = this.state.viewedIdSet.size;
-        this.dailyUsage = applyUsageDelta(this.dailyUsage, this.adapter.id, { postsViewed: 1 });
+      this.focusedHandle = handle;
+      state.snapshot.focusedPostId = handle.id;
+      state.snapshot.updatedAt = Date.now();
+      if (isNew && progressKey) {
+        state.viewedIdSet.add(progressKey);
+        state.snapshot.stats.viewedPostIds = [...state.viewedIdSet];
+        state.snapshot.stats.viewedCount = state.viewedIdSet.size;
         this.callbacks.onDailyUsageUpdated?.(this.dailyUsage);
       }
+      if (isNew || pendingPresentation) {
+        this.emit();
+        void acknowledgeDailyView(view).catch(() => undefined);
+        this.unsettledViews.delete(view.requestId);
+        state.snapshot.pendingPresentations = state.snapshot.pendingPresentations?.filter((pending) => pending.progressKey !== progressKey);
+      }
+      this.checkDailyLimits();
+      this.checkSessionLimit();
+      this.persistSoon();
+      this.emit();
+      return true;
+    };
+    this.pendingFocus = task().catch(async (error: unknown) => {
+      if (error instanceof Error && error.message === "Session ownership changed." && this.callbacks.reconcileOwnership) {
+        if (!isCurrent() || !await this.reconcileOwnership()) {
+          this.unsettledViews.delete(view.requestId);
+          return false;
+        }
+        if (!state.viewedIdSet.has(view.progressKey)) await this.releaseView(view).catch(() => undefined);
+        this.unsettledViews.delete(view.requestId);
+        view = { ...view, requestId: crypto.randomUUID() };
+        try {
+          return await task();
+        } catch (retryError) {
+          if (retryError instanceof Error && retryError.message === "Session ownership changed.") this.unsettledViews.delete(view.requestId);
+          await this.pause("manual");
+          this.callbacks.onError?.("Session recovery was interrupted. Start the session again to retry.");
+          return false;
+        }
+      }
+      await this.pause("manual");
+      this.callbacks.onError?.(error instanceof Error ? error.message : "Failed to record the post view.");
+      return false;
+    });
+    try {
+      return await this.pendingFocus;
+    } finally {
+      this.pendingFocus = null;
     }
-
-    this.checkSessionLimit();
-    this.checkDailyLimits();
-    this.persistSoon();
-    this.emit();
   }
 
   private checkSessionLimit(): void {
-    if (!this.state || this.state.snapshot.phase !== "active") {
+    if (!this.state || (this.state.snapshot.phase !== "active" && this.state.snapshot.phase !== "paused")) {
       return;
     }
 
@@ -445,17 +662,24 @@ export class DeckEngine {
   }
 
   private checkDailyLimits(): void {
-    if (!this.state || this.state.snapshot.phase !== "active") {
+    if (!this.state) {
       return;
     }
-
-    if (!isDailyLimitReached(this.dailyLimits, this.dailyUsage, this.adapter.id)) {
+    this.dailyUsage = normalizeUsageForDate(this.dailyUsage, localDateKey());
+    const reached = isDailyLimitReached(this.dailyLimits, this.dailyUsage, this.adapter.id);
+    if (!reached) {
+      if (this.state.snapshot.phase === "paused" && this.state.snapshot.pauseReason === "limit" && this.callbacks.canCountProgress?.() !== false) {
+        void this.resume();
+      }
       return;
     }
-
-    this.state.snapshot.phase = transitionSessionPhase(this.state.snapshot.phase, { type: "pause", reason: "limit" });
-    this.state.snapshot.pauseReason = "limit";
-    this.state.snapshot.updatedAt = Date.now();
+    if (this.state.snapshot.phase === "active") {
+      this.generation += 1;
+      this.state.snapshot.phase = transitionSessionPhase(this.state.snapshot.phase, { type: "pause", reason: "limit" });
+      this.state.snapshot.pauseReason = "limit";
+      this.state.snapshot.updatedAt = Date.now();
+      this.persistSoon();
+    }
     this.callbacks.onDailyLimitReached?.();
   }
 
@@ -480,6 +704,7 @@ export class DeckEngine {
 
   private attachObserver(): void {
     this.observerCleanup?.();
+    if (this.callbacks.observeFeed === false) return;
     this.observerCleanup = this.adapter.observeFeedChanges?.(() => {
       const currentFocusedId = this.state?.snapshot.focusedPostId ?? null;
       const currentFocusedHandle = currentFocusedId ? this.findHandleById(currentFocusedId) : null;
@@ -489,8 +714,7 @@ export class DeckEngine {
         return;
       }
 
-      this.focusNearestToViewportCenter(false, true);
-      this.emit();
+      void this.focusNearestToViewportCenter(false, true).then(() => this.emit());
     }) ?? null;
   }
 
@@ -502,7 +726,7 @@ export class DeckEngine {
 
       this.scrollRafId = window.requestAnimationFrame(() => {
         this.scrollRafId = 0;
-        this.focusNearestToViewportCenter(false);
+        void this.focusNearestToViewportCenter(false);
       });
     };
 
@@ -633,7 +857,7 @@ export class DeckEngine {
 
     this.persistTimerId = window.setTimeout(() => {
       this.persistTimerId = null;
-      void this.persistNow();
+      void this.persistNow().catch(() => undefined);
     }, 250);
   }
 
@@ -642,7 +866,7 @@ export class DeckEngine {
       return;
     }
 
-    await Promise.all([setSessionSnapshot(this.state.snapshot), setDailyUsage(this.dailyUsage)]);
+    await saveOwnedSessionSnapshot(this.cloneSnapshot(this.state.snapshot));
   }
 
   private clearFocusMarkers(): void {

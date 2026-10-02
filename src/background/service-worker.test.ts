@@ -61,6 +61,7 @@ vi.mock("@/shared/browser-polyfill", () => ({
       }
     },
     tabs: {
+      onUpdated: { addListener: vi.fn() },
       query: mocks.tabsQuery,
       update: mocks.tabsUpdate,
       create: mocks.tabsCreate,

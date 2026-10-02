@@ -2,17 +2,6 @@ import { browserApi } from "@/shared/browser-polyfill";
 import type { RuntimeMessage, RuntimeResponse, SiteSettings } from "@/types/messages";
 import type { DailyLimitsConfig, DailyUsage, SessionConfig, ThemeMode } from "@/types/session";
 
-const PANEL_META: Record<string, { title: string; description: string }> = {
-  general: {
-    title: "General",
-    description: "Theme and baseline behavior for FocusDeck overlays."
-  },
-  limits: {
-    title: "Limits",
-    description: "Total daily post limit across all sessions (resets at 12:00 AM local browser time)."
-  }
-};
-
 interface DraftState {
   themeMode: ThemeMode;
   sharedDailyLimit: number;
@@ -45,21 +34,18 @@ function toInt(value: string, fallback = 0): number {
   return Math.max(0, parsed);
 }
 
-function formatUsage(usage: DailyUsage): string {
-  return `Today (${usage.dateKey}): ${usage.global.postsViewed} posts viewed.`;
+function plural(count: number, word: string): string {
+  return `${count} ${word}${count === 1 ? "" : "s"}`;
 }
 
-const navButtons = Array.from(document.querySelectorAll<HTMLButtonElement>(".nav-item[data-tab]"));
-const panelTitle = mustElement<HTMLHeadingElement>("#panelTitle");
-const panelDescription = mustElement<HTMLParagraphElement>("#panelDescription");
-const panelGeneral = mustElement<HTMLElement>("#panel-general");
-const panelLimits = mustElement<HTMLElement>("#panel-limits");
 const themeInputs = Array.from(document.querySelectorAll<HTMLInputElement>('input[name="themeMode"]'));
 const sharedDailyLimit = mustElement<HTMLInputElement>("#sharedDailyLimit");
 const hideDistractingElements = mustElement<HTMLInputElement>("#hideDistractingElements");
 const bypassFollowingFeed = mustElement<HTMLInputElement>("#bypassFollowingFeed");
 const usageSummary = mustElement<HTMLParagraphElement>("#usageSummary");
+const usageMeter = mustElement<HTMLSpanElement>("#usageMeter");
 const status = mustElement<HTMLParagraphElement>("#status");
+const savebar = mustElement<HTMLElement>(".savebar");
 const applyChanges = mustElement<HTMLButtonElement>("#applyChanges");
 const resetDefaults = mustElement<HTMLButtonElement>("#resetDefaults");
 const clearSnapshot = mustElement<HTMLButtonElement>("#clearSnapshot");
@@ -74,7 +60,10 @@ const draft: DraftState = {
 
 let savedDailyLimits: DailyLimitsConfig | null = null;
 let savedSiteSettings: SiteSettings | null = null;
+let todayUsage: DailyUsage | null = null;
 let dirty = false;
+let draftRevision = 0;
+let saveInFlight = false;
 
 function setStatus(message: string): void {
   status.textContent = message;
@@ -83,6 +72,43 @@ function setStatus(message: string): void {
 function setDirty(next: boolean): void {
   dirty = next;
   applyChanges.disabled = !dirty;
+  savebar.dataset.dirty = String(dirty);
+}
+
+function markUnsaved(): void {
+  draftRevision += 1;
+  setDirty(true);
+  setStatus("Unsaved changes");
+}
+
+// Size the big limit numeral to its digits so "posts a day" sits right after it.
+function sizeLimitInput(): void {
+  sharedDailyLimit.style.width = `${Math.max(1, sharedDailyLimit.value.length) + 0.4}ch`;
+}
+
+function renderUsage(): void {
+  const meter = usageMeter.parentElement;
+  if (!todayUsage) {
+    usageSummary.textContent = "Couldn't load today's count.";
+    meter?.setAttribute("data-state", "off");
+    return;
+  }
+
+  const viewed = todayUsage.global.postsViewed;
+  const limit = draft.sharedDailyLimit;
+  const count = document.createElement("strong");
+
+  if (limit <= 0) {
+    count.textContent = plural(viewed, "post");
+    usageSummary.replaceChildren(count, " viewed today. No daily limit set.");
+    meter?.setAttribute("data-state", "off");
+    return;
+  }
+
+  count.textContent = String(viewed);
+  usageSummary.replaceChildren(count, ` of ${plural(limit, "post")} viewed today`);
+  usageMeter.style.width = `${Math.min(100, (viewed / limit) * 100)}%`;
+  meter?.setAttribute("data-state", viewed >= limit ? "over" : "on");
 }
 
 function readThemeMode(): ThemeMode {
@@ -114,22 +140,6 @@ function cacheThemeMode(mode: ThemeMode): void {
   }
 }
 
-function showPanel(tabId: string): void {
-  const isLimits = tabId === "limits";
-
-  panelGeneral.classList.toggle("is-hidden", isLimits);
-  panelLimits.classList.toggle("is-hidden", !isLimits);
-
-  for (const button of navButtons) {
-    const active = button.dataset.tab === tabId;
-    button.classList.toggle("nav-item-active", active);
-  }
-
-  const meta = PANEL_META[tabId] ?? PANEL_META.general;
-  panelTitle.textContent = meta.title;
-  panelDescription.textContent = meta.description;
-}
-
 function syncDraftFromForm(): void {
   draft.themeMode = readThemeMode();
   draft.sharedDailyLimit = toInt(sharedDailyLimit.value, draft.sharedDailyLimit);
@@ -140,6 +150,7 @@ function syncDraftFromForm(): void {
 function renderDraftToForm(): void {
   renderThemeMode(draft.themeMode);
   sharedDailyLimit.value = String(draft.sharedDailyLimit);
+  sizeLimitInput();
   hideDistractingElements.checked = draft.hideDistractingElements;
   bypassFollowingFeed.checked = draft.bypassFollowingFeed;
 }
@@ -153,76 +164,91 @@ function normalizeDailyLimits(limits: DailyLimitsConfig | null | undefined): Dai
   };
 }
 
-function readDailyLimitPayload(baseLimits: DailyLimitsConfig | null | undefined): DailyLimitsConfig {
+function readDailyLimitPayload(baseLimits: DailyLimitsConfig | null | undefined, savedDraft: DraftState): DailyLimitsConfig {
   const normalized = normalizeDailyLimits(baseLimits);
   return {
     global: {
-      maxPosts: draft.sharedDailyLimit
+      maxPosts: savedDraft.sharedDailyLimit
     },
     perSite: { ...normalized.perSite }
   };
 }
 
 async function applyAllChanges(): Promise<void> {
+  if (saveInFlight) {
+    return;
+  }
   syncDraftFromForm();
-  const [existingLimitsRes, existingSiteSettingsRes] = await Promise.all([
-    send<DailyLimitsConfig>({ type: "focusdeck:get-daily-limits" }),
-    send<SiteSettings>({ type: "focusdeck:get-site-settings", siteId: SITE_ID })
-  ]);
-  const baseLimits = existingLimitsRes.ok && existingLimitsRes.data ? existingLimitsRes.data : savedDailyLimits;
-  const dailyLimitPayload = readDailyLimitPayload(baseLimits);
-  const siteSettingsPayload: Partial<SiteSettings> = {
-    hideDistractingElements: draft.hideDistractingElements,
-    bypassFollowingFeed: draft.bypassFollowingFeed
-  };
-  const existingSiteSettings =
-    existingSiteSettingsRes.ok && existingSiteSettingsRes.data ? existingSiteSettingsRes.data : savedSiteSettings;
-  if (existingSiteSettings?.enabled === false) {
-    siteSettingsPayload.enabled = false;
+  const savedDraft = { ...draft };
+  const revision = draftRevision;
+  saveInFlight = true;
+  try {
+    const [existingLimitsRes, existingSiteSettingsRes] = await Promise.all([
+      send<DailyLimitsConfig>({ type: "focusdeck:get-daily-limits" }),
+      send<SiteSettings>({ type: "focusdeck:get-site-settings", siteId: SITE_ID })
+    ]);
+    const baseLimits = existingLimitsRes.ok && existingLimitsRes.data ? existingLimitsRes.data : savedDailyLimits;
+    const dailyLimitPayload = readDailyLimitPayload(baseLimits, savedDraft);
+    const siteSettingsPayload: Partial<SiteSettings> = {
+      hideDistractingElements: savedDraft.hideDistractingElements,
+      bypassFollowingFeed: savedDraft.bypassFollowingFeed
+    };
+    const existingSiteSettings =
+      existingSiteSettingsRes.ok && existingSiteSettingsRes.data ? existingSiteSettingsRes.data : savedSiteSettings;
+    if (existingSiteSettings?.enabled === false) {
+      siteSettingsPayload.enabled = false;
+    }
+
+    const [configRes, limitsRes, siteSettingsRes] = await Promise.all([
+      send<SessionConfig>({
+        type: "focusdeck:set-config",
+        payload: { themeMode: savedDraft.themeMode }
+      }),
+      send<DailyLimitsConfig>({
+        type: "focusdeck:set-daily-limits",
+        payload: dailyLimitPayload
+      }),
+      send<SiteSettings>({
+        type: "focusdeck:set-site-settings",
+        siteId: SITE_ID,
+        payload: siteSettingsPayload
+      })
+    ]);
+
+    if (!configRes.ok) {
+      setStatus(configRes.error ?? "Couldn't save the theme.");
+      return;
+    }
+
+    if (!limitsRes.ok) {
+      setStatus(limitsRes.error ?? "Couldn't save the daily limit.");
+      return;
+    }
+
+    if (limitsRes.data) {
+      savedDailyLimits = normalizeDailyLimits(limitsRes.data);
+    }
+
+    if (!siteSettingsRes.ok) {
+      setStatus(siteSettingsRes.error ?? "Couldn't save feed settings.");
+      return;
+    }
+
+    if (siteSettingsRes.data) {
+      savedSiteSettings = siteSettingsRes.data;
+    }
+
+    cacheThemeMode(savedDraft.themeMode);
+    if (revision === draftRevision) {
+      setDirty(false);
+      setStatus("Changes saved");
+    } else {
+      setDirty(true);
+      setStatus("Unsaved changes");
+    }
+  } finally {
+    saveInFlight = false;
   }
-
-  const [configRes, limitsRes, siteSettingsRes] = await Promise.all([
-    send<SessionConfig>({
-      type: "focusdeck:set-config",
-      payload: { themeMode: draft.themeMode }
-    }),
-    send<DailyLimitsConfig>({
-      type: "focusdeck:set-daily-limits",
-      payload: dailyLimitPayload
-    }),
-    send<SiteSettings>({
-      type: "focusdeck:set-site-settings",
-      siteId: SITE_ID,
-      payload: siteSettingsPayload
-    })
-  ]);
-
-  if (!configRes.ok) {
-    setStatus(configRes.error ?? "Failed to save theme settings.");
-    return;
-  }
-
-  if (!limitsRes.ok) {
-    setStatus(limitsRes.error ?? "Failed to save daily limit.");
-    return;
-  }
-
-  if (limitsRes.data) {
-    savedDailyLimits = normalizeDailyLimits(limitsRes.data);
-  }
-
-  if (!siteSettingsRes.ok) {
-    setStatus(siteSettingsRes.error ?? "Failed to save site settings.");
-    return;
-  }
-
-  if (siteSettingsRes.data) {
-    savedSiteSettings = siteSettingsRes.data;
-  }
-
-  cacheThemeMode(draft.themeMode);
-  setDirty(false);
-  setStatus("Changes applied.");
 }
 
 async function loadData(): Promise<void> {
@@ -251,49 +277,44 @@ async function loadData(): Promise<void> {
 
   renderDraftToForm();
 
-  if (usageRes.ok && usageRes.data) {
-    usageSummary.textContent = formatUsage(usageRes.data);
-  } else {
-    usageSummary.textContent = "Unable to load usage.";
-  }
+  todayUsage = usageRes.ok && usageRes.data ? usageRes.data : null;
+  renderUsage();
 
   setDirty(false);
-  setStatus("Ready");
-}
-
-for (const button of navButtons) {
-  button.addEventListener("click", () => {
-    const tab = button.dataset.tab === "limits" ? "limits" : "general";
-    showPanel(tab);
-  });
+  setStatus("No unsaved changes");
 }
 
 for (const input of themeInputs) {
   input.addEventListener("change", () => {
     draft.themeMode = readThemeMode();
     applyThemePreview(draft.themeMode);
-    setDirty(true);
-    setStatus("Unsaved changes.");
+    markUnsaved();
   });
 }
 
+sharedDailyLimit.addEventListener("input", () => {
+  sizeLimitInput();
+  draft.sharedDailyLimit = toInt(sharedDailyLimit.value, 0);
+  renderUsage();
+  markUnsaved();
+});
+
 sharedDailyLimit.addEventListener("change", () => {
   sharedDailyLimit.value = String(toInt(sharedDailyLimit.value, 0));
+  sizeLimitInput();
   draft.sharedDailyLimit = toInt(sharedDailyLimit.value, 0);
-  setDirty(true);
-  setStatus("Unsaved changes.");
+  renderUsage();
+  markUnsaved();
 });
 
 hideDistractingElements.addEventListener("change", () => {
   draft.hideDistractingElements = hideDistractingElements.checked;
-  setDirty(true);
-  setStatus("Unsaved changes.");
+  markUnsaved();
 });
 
 bypassFollowingFeed.addEventListener("change", () => {
   draft.bypassFollowingFeed = bypassFollowingFeed.checked;
-  setDirty(true);
-  setStatus("Unsaved changes.");
+  markUnsaved();
 });
 
 applyChanges.addEventListener("click", () => {
@@ -306,32 +327,34 @@ resetDefaults.addEventListener("click", () => {
   draft.hideDistractingElements = false;
   draft.bypassFollowingFeed = false;
   renderDraftToForm();
+  renderUsage();
+  draftRevision += 1;
   setDirty(true);
-  setStatus("Defaults restored locally. Click Apply changes to save.");
+  setStatus("Defaults restored. Save to keep them.");
 });
 
 clearSnapshot.addEventListener("click", () => {
   void send({ type: "focusdeck:clear-session-snapshot" }).then((response) => {
-    setStatus(response.ok ? "Cleared unfinished session." : response.error ?? "Could not clear session.");
+    setStatus(response.ok ? "Unfinished session cleared" : response.error ?? "Couldn't clear the unfinished session.");
   });
 });
 
 clearDailyUsage.addEventListener("click", () => {
-  if (!window.confirm("Reset today's local usage counters?")) {
+  if (!window.confirm("Reset today's post count to 0?")) {
     return;
   }
 
   void send<DailyUsage>({ type: "focusdeck:clear-daily-usage" }).then((response) => {
     if (!response.ok || !response.data) {
-      setStatus(response.error ?? "Could not reset usage.");
+      setStatus(response.error ?? "Couldn't reset today's count.");
       return;
     }
 
-    usageSummary.textContent = formatUsage(response.data);
-    setStatus("Reset today's usage.");
+    todayUsage = response.data;
+    renderUsage();
+    setStatus("Today's count reset");
   });
 });
 
-showPanel("general");
 setDirty(false);
 void loadData();
