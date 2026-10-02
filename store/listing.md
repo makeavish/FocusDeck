@@ -10,43 +10,39 @@ FocusDeck: Intentional Feed
 
 ## Short Description (≤132 characters)
 
-Keep native feed UI while adding subtle focus sessions and user-initiated actions.
+See your X feed one post at a time. Pick how many posts to read, and the feed locks when you're done. Optional daily limit.
 
 ## Detailed Description
 
-FocusDeck turns your X / Twitter feed into a deliberate, one-post-at-a-time experience — no infinite scroll, no distractions.
+FocusDeck turns your X feed into a deliberate, one-post-at-a-time read. No infinite scroll.
 
 **How it works**
 
-• Feed access is gated behind an explicit session start — no surprise changes when you load the page.
-• During a session, only the focused post is visible. Navigate with J/K or arrow keys.
-• The `Open` action resolves X article permalinks more reliably, including trickier post layouts.
-• Optional distraction filtering hides non-essential X/Twitter chrome while keeping Search accessible.
-• Optional Following-tab bypass lets X's `Following` timeline remain fully native while `For you` stays session-gated.
-• After your post limit (10 / 20 / 30 / custom), the session ends and only previously viewed posts remain accessible. Non-viewed posts are blocked.
-• Promoted/ad units are hidden across supported X/Twitter routes, including idle and site-disabled states.
-• A total daily post limit (optional) enforces a hard cap, resetting at midnight local time.
-• Start-session and daily-limit modals lock background scrolling while visible.
-• Actions like Open, Save, and Hide (Not Interested) are triggered only by explicit user gestures. Save and Hide are rate-limited.
+• On the home feed, FocusDeck asks how many posts you want: 10, 20, 30, or a custom number. The feed stays hidden until you start.
+• Only the focused post is visible, in X's own post UI. Move with J/K or the arrow keys.
+• When you reach your number, the session ends. Posts you've seen stay readable; the rest are locked.
+• An optional daily limit caps posts across all sessions and resets at local midnight.
+• Opening a post, thread, or media pauses the session, and coming back resumes it. Reading replies doesn't count.
+• Ads are always hidden. You can also hide X's right sidebar (Search stays) and Explore, Follow, and Premium.
+• Optionally, let the Following tab scroll freely without counting toward your limits.
 
-**What FocusDeck does NOT do**
+**What FocusDeck doesn't do**
 
-• No custom post cards — the native X post UI is preserved exactly as-is.
-• No background automation or bulk actions.
-• No remote code loading.
-• No cloud sync or server-side analytics. All data stays in your browser's local storage.
+• Replace X's post UI. Posts look exactly as they do on X.
+• Act on its own. Open, Save, and Hide run only when you press them, and Save and Hide are limited to one per second.
+• Load remote code or send data anywhere. Settings and counts stay in your browser's local storage.
 
 **Settings**
 
-Click the extension icon to open Settings directly. Choose theme (System / Light / Dark), enable optional distraction filtering, configure the total daily post limit, decide whether FocusDeck should bypass X's `Following` tab, and manage session data.
+Click the toolbar icon to open Settings. Set the daily limit and see today's count, hide distractions, let Following scroll freely, pick a theme (System, Light, or Dark), and clear an unfinished session.
 
 **Keyboard shortcuts**
 
-• J / ↓ — next post
-• K / ↑ — previous post
-• O — open focused post in background tab (fallback: new tab)
-• S — save / bookmark
-• X — not interested
+• J or ↓: next post
+• K or ↑: previous post
+• O: open the post in a background tab
+• S: bookmark
+• X: not interested
 
 ---
 
@@ -74,12 +70,12 @@ The extension does not use a browser-action popup because clicking the toolbar i
 ## Permission Justifications
 
 ### `storage`
-Stores session configuration, theme preference, daily usage counters, and session snapshots locally. No data leaves the browser.
+Stores session configuration, theme preference, daily limits and usage counters, and session snapshots locally. No data leaves the browser.
 
 ### `tabs`
 Used for three purposes only:
 1. When the user clicks the toolbar icon, FocusDeck queries open tabs to check if the Settings page is already open (to re-focus it rather than opening a duplicate).
-2. The "Close Feed" action in the daily-limit modal removes the current tab via `tabs.remove`.
+2. The "Close tab" action in the daily-limit modal removes the current tab via `tabs.remove`.
 3. The `Open` action opens the focused post in an inactive background tab via `tabs.create` (same window when available).
 
 No browsing history, tab URLs, or other tab metadata is collected or stored.
@@ -124,12 +120,12 @@ Located in `store/screenshots/`:
 
 | # | File | Shows |
 |---|------|-------|
-| 1 | `1-settings.png` | Settings page — General tab with theme selector and session data controls |
-| 2 | `2-blocked-posts.png` | Focused feed view — one post visible with top-dock controls |
-| 3 | `3-daily-limit.png` | Daily limit modal — usage summary with Close Feed and Settings actions |
-| 4 | `4-session-start.png` | Session-start prompt — choose post target and begin focused session |
+| 1 | `1-settings.png` | Settings page: daily limit with today's count, feed options, theme, and session data |
+| 2 | `2-blocked-posts.png` | Active session: one focused post with the session counter and Open / Save / Hide bar |
+| 3 | `3-daily-limit.png` | Daily limit dialog: posts viewed today with Close tab and Open settings |
+| 4 | `4-session-start.png` | Session prompt: choose 10, 20, 30, or a custom number of posts |
 
-All screenshots use demo / placeholder content with no real user data.
+Screenshots show the X feed with names, handles, and profile photos masked.
 
 ### Uploaded resolution
 All screenshots in `store/screenshots/` are 1280×800.

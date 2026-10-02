@@ -1,190 +1,123 @@
 <p align="center">
-  <img src="src/icons/icon.svg" alt="FocusDeck Icon" width="128" height="128">
+  <img src="src/icons/icon.svg" alt="FocusDeck icon" width="96" height="96">
 </p>
 
 # FocusDeck: Intentional Feed
 
-FocusDeck is a WebExtensions MV3 extension for X.com that makes feed browsing intentional.
-
-## Install FocusDeck
+See your X feed one post at a time. Choose how many posts you want, read them, and the feed locks again.
 
 [![Install on Firefox](https://img.shields.io/badge/Install%20on-Firefox-FF7139?style=for-the-badge&logo=firefoxbrowser&logoColor=white)](https://addons.mozilla.org/en-US/firefox/addon/focusdeck-intentional-feed/)
 [![Install on Chrome](https://img.shields.io/badge/Install%20on-Chrome-4285F4?style=for-the-badge&logo=googlechrome&logoColor=white)](https://chromewebstore.google.com/detail/focusdeck-intentional-fee/pnfjneofemgjgapbomggpgpkedocpibp?hl=en)
 
-## Extension Behavior
-
-- Native X post UI is preserved (no custom post cards/decks).
-- Feed access is session-gated; if no session is active, feed posts are hidden and a start-session popover is shown.
-- During a session, only the focused post is visible; all other feed items are hidden.
-- Optional Following-tab bypass lets FocusDeck step aside on X's `Following` timeline without affecting `For you`.
-- Promoted/ad units are hidden across supported X/Twitter routes (including idle or site-disabled states).
-- Right sidebar modules are hidden while feed focus UI is active on feed routes.
-- On fresh session start, focus begins at the first visible feed post; ongoing viewport changes can move focus to the nearest visible post.
-- Floating action pill includes `Open`, `Save`, and `Hide`.
-- After a posts-limit session ends, only previously viewed posts remain explorable; non-viewed posts are blocked, blurred, and non-clickable while general feed-side UI remains visible.
-
-## What's New in 0.3.0
-
-- Improved X permalink resolution so the `Open` action lands on the intended post more reliably.
-- Added an optional distraction filter for X/Twitter chrome, including left-nav `Explore`, `Follow`, `Premium`, and most of the right rail while preserving Search.
-- Added a `Bypass FocusDeck on Following` setting so X's `Following` tab can scroll normally while `For you` remains session-gated.
-- Preserved paused-session state correctly when moving between `Following`, detail routes, and the managed feed.
-- Improved tab-change detection for X's home timeline so bypass state updates more reliably.
-
-## Screenshots
-
 <p align="center">
-  <img src="store/screenshots/4-session-start.png" alt="Start Session Prompt" width="45%">
-  <img src="store/screenshots/2-blocked-posts.png" alt="Focused Post View" width="45%">
+  <img src="store/screenshots/4-session-start.png" alt="Session prompt asking how many posts to read" width="45%">
+  <img src="store/screenshots/2-blocked-posts.png" alt="One focused post with the session counter" width="45%">
 </p>
 <p align="center">
-  <img src="store/screenshots/3-daily-limit.png" alt="Daily Limit Reached" width="45%">
-  <img src="store/screenshots/1-settings.png" alt="Settings Page" width="45%">
+  <img src="store/screenshots/3-daily-limit.png" alt="Daily limit reached dialog" width="45%">
+  <img src="store/screenshots/1-settings.png" alt="Settings page" width="45%">
 </p>
 
-## Session and Route Handling
+## How it works
 
-- Session start supports by-post limits (`10 / 20 / 30 / custom`).
-- When total daily post limit is enabled, session post limit selection is capped by remaining posts for the day.
-- Opening post details/thread/media pauses session automatically.
-- Returning to feed resumes automatically and restores focus when possible.
-- Leaving feed routes pauses session quietly.
-- Posts-limit completion switches to viewed-only explore mode on the current feed while keeping feed-side UI visible.
-- Daily limit reached shows a dedicated modal with `Close Feed` and `Settings` (`Close Feed` closes the active tab).
-- Start-session and daily-limit blocking modals lock page scrolling until dismissed.
+- **Sessions.** On the home feed, FocusDeck asks how many posts you want: 10, 20, 30, or a custom number. The feed stays hidden until you start.
+- **One post at a time.** Only the focused post is visible, in X's own post UI. Move with `J`/`K` or the arrow keys.
+- **Session target.** When you reach your number, the session ends. Posts you've seen stay readable; the rest are locked.
+- **Daily limit.** A cap across all sessions, 100 posts by default. It resets at local midnight; set it to 0 to turn it off.
+- **Automatic pauses.** Opening a post, thread, or media pauses the session, and coming back resumes it. Reading replies doesn't count.
+- **A quieter X.** Ads are always hidden. You can also hide the right sidebar (Search stays) and Explore, Follow, and Premium.
+- **Following tab.** Optionally, let Following scroll freely without counting toward your limits.
 
-## Settings (Current)
+Everything stays in your browser's local storage. No account, no network requests, no analytics.
 
-Clicking the extension icon opens Settings directly (no popup).
+## Keyboard shortcuts
 
-Available settings:
-- Theme: `System`, `Light mode`, `Dark mode`
-- Distraction Filter: `Hide distracting elements`
-- Total daily post limit (global, local-only, resets at local browser midnight)
-- Following Feed: `Bypass FocusDeck on Following`
-- Session maintenance actions: clear unfinished session, reset today's usage
+| Key | Action |
+| --- | --- |
+| `J` / `↓` | Next post |
+| `K` / `↑` | Previous post |
+| `O` | Open the post in a background tab |
+| `S` | Bookmark |
+| `X` | Not interested |
 
-## Safety and Policy Guardrails
+Open, Save, and Hide run only when you press them. Save and Hide are limited to one per second.
 
-- `Open`, `Save`, and `Hide` only run from explicit user gestures.
-- `Save` and `Hide` actions are rate-limited (minimum 1 second between actions).
-- No background automation, no bulk actions.
-- No remote code loading.
-- Core behavior does not require extension-owned network calls.
-- Usage tracking is local-only (`storage.local`).
+## Settings
 
-## Platform and Scope
+Click the toolbar icon to open Settings:
 
-- Primary: Chrome MV3
-- Supported build target: Firefox (same codebase)
-- Current content-script scope: `x.com` and `twitter.com` routes
+- Daily limit, with today's count and a reset
+- Hide distractions
+- Let Following scroll freely
+- Theme: System, Light, or Dark
+- Clear an unfinished session
 
-Note: Adapter skeletons for HN/Reddit/LinkedIn are in-repo for future expansion, but the current version is X-focused.
+## What's new
 
-## Tech Stack
+### Unreleased
 
-- TypeScript
-- Vite build pipeline
-- `webextension-polyfill`
-- Minimal dependencies
+- Redesigned session prompt, daily-limit dialog, session counter, and Settings page, with light and dark themes.
+- Session and daily-limit dialogs work from the keyboard and are announced to screen readers.
+- Posts left behind after a session show a lighter locked state.
 
-## Quick Start
+### 0.3.0
 
-1. Install dependencies:
+- Optional distraction filter for X's sidebar and left menu.
+- Optional Following-tab bypass.
+- More reliable `Open` for X article posts.
+
+## Development
 
 ```bash
 npm install
+npm run build        # dist/chrome and dist/firefox
+npm test
+npm run typecheck
 ```
 
-2. Build bundles:
+Load the unpacked build:
 
-```bash
-npm run build:chrome
-npm run build:firefox
-```
+- **Chrome:** `chrome://extensions` → Developer mode → Load unpacked → `dist/chrome`
+- **Firefox:** `about:debugging#/runtime/this-firefox` → Load Temporary Add-on → `dist/firefox/manifest.json`
 
-3. Load unpacked extension:
-- Chrome: `chrome://extensions` -> Enable Developer Mode -> Load unpacked -> select `dist/chrome`
-- Firefox: `about:debugging#/runtime/this-firefox` -> Load Temporary Add-on -> select `dist/firefox/manifest.json`
+`npm run release && npm run pack` writes the Chrome, Firefox, and source ZIPs to `release/`.
 
-## Keyboard Shortcuts
+FocusDeck runs on `x.com` and `twitter.com`. Chrome MV3 is the primary target; Firefox builds from the same code. Adapter stubs for HN, Reddit, and LinkedIn are in the repo but not active.
 
-- `J` / `ArrowDown`: next focused post
-- `K` / `ArrowUp`: previous focused post
-- `O`: open focused post in background tab (fallback: new tab)
-- `S`: save/bookmark
-- `X`: not interested
+Docs: [architecture](docs/architecture.md), [privacy policy](docs/privacy-policy.md).
 
-## Manual Test Checklist
+### Manual test checklist
 
-- Feed is locked when no session is active.
-- Start-session popover appears on X feed routes.
-- Enabling `Hide distracting elements` removes non-essential X/Twitter chrome while keeping Search accessible.
-- Enabling `Bypass FocusDeck on Following` lets the `Following` tab scroll freely without consuming session or daily-limit progress.
-- Switching back from `Following` to `For you` restores paused sessions and daily-limit UI correctly.
-- Promoted/ad units stay hidden across X/Twitter routes, including when no session is running.
-- Only one focused post is visible during active session.
-- Right sidebar modules are hidden on feed routes while feed focus UI is active.
-- Start-session and daily-limit modals block wheel/touch/key scrolling until dismissed.
-- Post counter increments only for feed progression (not detail/reply scrolling).
-- Opening details pauses session and returning to feed resumes automatically.
-- `Open` action pill button and `O` shortcut open the focused post in a background/new tab.
-- Posts-limit completion keeps feed-side UI visible while only previously viewed posts remain explorable; blocked posts remain non-clickable.
-- Daily limit modal shows expected actions and `Close Feed` closes the active tab.
-- Extension icon opens Settings page directly.
-- Chrome and Firefox unpacked builds load successfully.
+- The feed is hidden with no session, and the session prompt appears on the home feed.
+- During a session, only the focused post shows; `J`/`K` move between posts.
+- The counter goes up only when moving through the feed, not while reading a post or its replies.
+- Opening a post pauses the session; going back resumes it on the same post.
+- Reaching the target leaves seen posts readable and locks the rest.
+- Reaching the daily limit shows the dialog; `Close tab` closes the tab.
+- Both dialogs block page scrolling and work with Tab, Enter, and Space.
+- Hide distractions and the Following bypass take effect after saving.
+- Ads stay hidden on every X page, with or without a session.
+- The toolbar icon opens Settings; Chrome and Firefox builds both load.
 
-## Documentation
+## Firefox reviewer build instructions
 
-- Architecture: `/docs/architecture.md`
-- Privacy policy: `/docs/privacy-policy.md`
+For AMO source review.
 
-## Verification Commands
+**Environment:** macOS or Linux, Node.js 22.x, npm 10+ (`node -v`, `npm -v`). Node is available from https://nodejs.org/.
 
-- `npm run typecheck`
-- `npm run test`
-- `npm run build`
-- `npm run release && npm run pack` (writes Chrome, Firefox, and source ZIPs to `release/`)
-
-## Firefox Reviewer Build Instructions
-
-Use this section for AMO source-code submission.
-
-### Operating System / Build Environment
-
-- macOS or Linux
-- Node.js `22.x`
-- npm `10+` (or npm bundled with Node 22)
-
-### Install Requirements
-
-```bash
-node -v
-npm -v
-```
-
-If needed, install Node.js from `https://nodejs.org/`.
-
-### Reproducible Firefox Build Steps
+**Build:**
 
 ```bash
 npm ci
 npm run release:firefox
 ```
 
-### Build Script Used
+`release:firefox` runs `RELEASE=1 npm run build:firefox`, which runs `tsx scripts/build.ts firefox`.
 
-- `release:firefox` -> `RELEASE=1 npm run build:firefox`
-- `build:firefox` -> `tsx scripts/build.ts firefox`
+**Outputs:**
 
-### Expected Outputs
+- `dist/firefox/manifest.json` and `dist/firefox/content.js`
+- `release/focusdeck-firefox-v0.3.0.zip` with `npm run pack:firefox`
+- `release/focusdeck-source-v0.3.0.zip` with `npm run pack:source` or `npm run pack`
 
-- `dist/firefox/manifest.json`
-- `dist/firefox/content.js`
-- `release/focusdeck-firefox-v0.3.0.zip` (if `npm run pack:firefox` is executed)
-- `release/focusdeck-source-v0.3.0.zip` (if `npm run pack:source` or `npm run pack` is executed)
-
-### Source Integrity
-
-- Source files in this repository are human-readable (`.ts`, `.html`, `.css`).
-- Generated/minified files are produced only during the build step into `dist/`.
+All source is human-readable (`.ts`, `.html`, `.css`). Minified files are generated only in `dist/` during the build.

@@ -71,7 +71,7 @@ Policy:
 - Feed -> Non-feed route: pause quietly.
 - No session on feed: keep feed locked until a new session starts.
 - Start-session and daily-limit modals are blocking and lock page scroll while visible.
-- Daily limit modal `Close Feed` action sends a message to service worker to close the active tab.
+- Daily limit modal `Close tab` action sends a message to service worker to close the active tab.
 - `Open` action sends `focusdeck:open-background-tab`; service worker opens an inactive tab (same window when available).
 
 ## Counting Rules

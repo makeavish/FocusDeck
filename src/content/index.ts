@@ -23,7 +23,7 @@ import {
   type VideoPlaybackGuardMutation
 } from "@/content/video-playback-guard";
 import { browserApi } from "@/shared/browser-polyfill";
-import { STORAGE_KEYS } from "@/shared/constants";
+import { OVERLAY_HOST_ID, STORAGE_KEYS } from "@/shared/constants";
 import {
   clearSessionSnapshot,
   getDailyLimits,
@@ -347,27 +347,32 @@ function ensureFocusLayerStyle(): void {
       content: "" !important;
       position: absolute !important;
       inset: 0 !important;
-      background: rgba(4, 10, 18, 0.88) !important;
+      background:
+        repeating-linear-gradient(
+          135deg,
+          rgba(120, 128, 168, 0.1) 0 1px,
+          transparent 1px 9px
+        ),
+        rgba(120, 128, 168, 0.06) !important;
       z-index: 4 !important;
       pointer-events: auto !important;
     }
 
     [data-focusdeck-post-limit-blocked='true']::after {
-      content: "Blocked in this session. Scroll up to viewed posts." !important;
+      content: "Session target reached. Scroll up to revisit viewed posts." !important;
       position: absolute !important;
       left: 50% !important;
       top: 50% !important;
       transform: translate(-50%, -50%) !important;
       z-index: 5 !important;
-      color: #d8e8ff !important;
-      background: rgba(8, 24, 45, 0.92) !important;
-      border: 1px solid rgba(69, 118, 182, 0.6) !important;
-      border-radius: 999px !important;
-      padding: 8px 14px !important;
-      font-size: 12px !important;
-      font-weight: 700 !important;
-      letter-spacing: 0.01em !important;
-      white-space: nowrap !important;
+      width: max-content !important;
+      max-width: calc(100% - 32px) !important;
+      color: #eceefe !important;
+      background: #1b1e3a !important;
+      border-radius: 10px !important;
+      padding: 7px 12px !important;
+      font: 500 12px/1.4 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif !important;
+      text-align: center !important;
       pointer-events: none !important;
     }
 
@@ -377,8 +382,8 @@ function ensureFocusLayerStyle(): void {
       filter: none !important;
       outline: none !important;
       position: relative !important;
-      border-radius: 14px !important;
-      box-shadow: inset 0 0 0 2px rgba(26, 98, 214, 0.82) !important;
+      border-radius: 16px !important;
+      box-shadow: inset 0 0 0 2px rgba(83, 99, 230, 0.9) !important;
       pointer-events: auto !important;
       transition: opacity 120ms ease;
     }
@@ -625,6 +630,14 @@ function setPopupScrollLocked(locked: boolean): void {
   }
 
   const blockScrollEvent = (event: Event): void => {
+    // A modal taller than the viewport scrolls internally (it uses overscroll containment).
+    const insideModal = event
+      .composedPath()
+      .some((node) => node instanceof HTMLElement && node.classList.contains("fd-modal"));
+    if (insideModal) {
+      return;
+    }
+
     event.preventDefault();
   };
   const blockScrollKey = (event: KeyboardEvent): void => {
@@ -632,7 +645,10 @@ function setPopupScrollLocked(locked: boolean): void {
       return;
     }
 
-    if (isInputLikeElement(event.target)) {
+    // Let overlay controls (custom target input, Space on buttons) handle their own keys.
+    const path = event.composedPath();
+    const fromOverlay = path.some((node) => node instanceof HTMLElement && node.id === OVERLAY_HOST_ID);
+    if (fromOverlay || isInputLikeElement(path[0] ?? event.target)) {
       return;
     }
 

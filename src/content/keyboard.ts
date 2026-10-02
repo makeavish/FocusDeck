@@ -19,7 +19,9 @@ function isEditable(target: EventTarget | null): boolean {
 
 export function installKeyboardShortcuts(handlers: KeyboardHandlers): () => void {
   const onKeyDown = (event: KeyboardEvent) => {
-    if (isEditable(event.target) || event.metaKey || event.ctrlKey || event.altKey) {
+    // Events from the overlay's shadow root are retargeted to its host, so read the real origin.
+    const origin = event.composedPath()[0] ?? event.target;
+    if (isEditable(origin) || event.metaKey || event.ctrlKey || event.altKey) {
       return;
     }
 
