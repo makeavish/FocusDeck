@@ -54,6 +54,10 @@ Click the toolbar icon to open Settings:
 
 ## What's new
 
+### 1.0.1
+
+- Switching from Following to For You shows the session prompt again when no session is running.
+
 ### 1.0.0
 
 - Redesigned session prompt, daily-limit dialog, session counter, and Settings page, with light and dark themes.
@@ -122,7 +126,7 @@ npm run release:firefox
 **Outputs:**
 
 - `dist/firefox/manifest.json` and `dist/firefox/content.js`
-- `release/focusdeck-firefox-v1.0.0.zip` with `npm run pack:firefox`
-- `release/focusdeck-source-v1.0.0.zip` with `npm run pack:source` or `npm run pack`
+- `release/focusdeck-firefox-v1.0.1.zip` with `npm run pack:firefox`
+- `release/focusdeck-source-v1.0.1.zip` with `npm run pack:source` or `npm run pack`
 
 All source is human-readable (`.ts`, `.html`, `.css`). Minified files are generated only in `dist/` during the build.

@@ -1,7 +1,7 @@
 {
   "manifest_version": 3,
   "name": "FocusDeck: Intentional Feed",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "See your X feed one post at a time. Pick how many posts to read, and the feed locks when you're done. Optional daily limit.",
   "icons": {
     "16": "icons/icon-16.png",
